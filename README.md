@@ -100,6 +100,9 @@ The landing page lives in `landing/` (static HTML + Tailwind + JS). To preview l
 cd landing && npx serve .
 ```
 
+The landing page's release notes are sourced from the root [`CHANGELOG.md`](CHANGELOG.md).
+The deploy workflow copies it into the site artifact, so update the root changelog only.
+
 ## Landing Page
 
 A static marketing site is available in `landing/`:

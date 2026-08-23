@@ -172,17 +172,16 @@
     <div class="max-w-3xl mx-auto">
       <div class="flex items-center justify-between gap-4">
         <h2 class="text-3xl font-bold text-white">What's new</h2>
-        <span class="px-3 py-1 rounded-full border border-accent text-xs text-accent">v0.2.4</span>
+        <span id="release-version" class="px-3 py-1 rounded-full border border-accent text-xs text-accent">Loading</span>
       </div>
-      <div class="mt-8 rounded-xl border border-edge bg-panel p-6">
-        <h3 class="text-lg font-semibold text-white">Themes, settings, and safer updates</h3>
-        <ul class="mt-4 space-y-3 text-sm text-gray-400 list-disc list-inside">
-          <li>Added 27 built-in themes, including light, high-contrast, and VS Code-inspired palettes.</li>
-          <li>Added a settings dialog with Appearance, Terminal, and About sections.</li>
-          <li>Updates can download in the background and relaunch without losing terminal sessions.</li>
-          <li>New-version detection stays visible from the Settings badge until you act.</li>
-        </ul>
+      <div id="release-notes" class="mt-8 rounded-xl border border-edge bg-panel p-6" aria-live="polite">
+        <h3 id="release-title" class="text-lg font-semibold text-white">Loading release notes...</h3>
+        <ul id="release-items" class="mt-4 space-y-3 text-sm text-gray-400 list-disc list-inside"></ul>
       </div>
+      <details class="mt-4 rounded-xl border border-edge bg-panel overflow-hidden">
+        <summary class="px-6 py-4 cursor-pointer text-sm text-gray-300 hover:text-accent transition">Release history</summary>
+        <div id="release-history" class="px-6 pb-6 space-y-6"></div>
+      </details>
       <p class="mt-4 text-sm text-gray-500">See the full history in <a class="text-accent hover:underline" href="https://github.com/boytur/vterm/blob/master/CHANGELOG.md" target="_blank" rel="noreferrer">CHANGELOG.md</a>.</p>
     </div>
   </section>
