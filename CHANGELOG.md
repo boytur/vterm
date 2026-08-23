@@ -6,6 +6,7 @@ All notable changes to vterm are documented here.
 
 - Add copyable curl install commands to the landing page hero and install section.
 - Render release notes and release history on the landing page from the project changelog.
+- Redesign the landing page with responsive product-focused content, SEO metadata, and structured FAQ data.
 
 ## [0.2.4] - 2026-08-23
 
