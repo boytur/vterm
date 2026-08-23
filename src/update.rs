@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const CURRENT_VERSION: &str = env!("VTERM_VERSION");
 pub const REPO: &str = "boytur/vterm";
 
 #[derive(Debug, Clone)]
