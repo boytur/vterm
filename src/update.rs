@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::path::{Path, PathBuf};
 
 pub const CURRENT_VERSION: &str = env!("VTERM_VERSION");
 pub const REPO: &str = "boytur/vterm";
@@ -60,17 +61,149 @@ fn is_newer(latest: &str, current: &str) -> bool {
     }
 }
 
+/// macOS: download the new release, mount it, copy the app over the running
+/// bundle, then relaunch. Falls back to opening the download URL in a browser
+/// if any step fails (e.g. a dev build that isn't a real .app bundle).
 #[cfg(target_os = "macos")]
 pub fn notify(info: &UpdateInfo) {
+    match download_and_install(info) {
+        Ok(()) => {
+            // download_and_install relaunches and exits; we only get here on error.
+        }
+        Err(e) => {
+            eprintln!("vterm: auto-update failed ({e}); opening download page");
+            let _ = std::process::Command::new("open")
+                .arg(&info.download_url)
+                .output();
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn notify(_info: &UpdateInfo) {}
+
+#[cfg(target_os = "macos")]
+fn download_and_install(info: &UpdateInfo) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let current_app = find_app_bundle(&exe).ok_or("not running from a .app bundle")?;
+
+    show_notification(&format!("Updating to v{}…", info.version));
+
+    let dmg = download_to_temp(&info.download_url)?;
+    let mount = attach_dmg(&dmg)?;
+    let new_app = find_in_volume(&mount)?;
+    install_app(&new_app, &current_app)?;
+    detach_dmg(&mount);
+
+    relaunch(&current_app)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn find_app_bundle(exe: &Path) -> Option<PathBuf> {
+    let mut p = exe.to_path_buf();
+    loop {
+        if p.extension().and_then(|e| e.to_str()) == Some("app") {
+            return Some(p);
+        }
+        p = p.parent()?.to_path_buf();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn download_to_temp(url: &str) -> Result<PathBuf, String> {
+    let agent = ureq::AgentBuilder::new().user_agent("vterm").build();
+    let resp = agent.get(url).call().map_err(|e| e.to_string())?;
+    let mut reader = resp.into_reader();
+
+    let tmp = std::env::temp_dir().join(format!("vterm-update-{}.dmg", std::process::id()));
+    let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
+    Ok(tmp)
+}
+
+#[cfg(target_os = "macos")]
+fn attach_dmg(dmg: &Path) -> Result<PathBuf, String> {
+    let out = std::process::Command::new("hdiutil")
+        .args(["attach", "-nobrowse", "-noautoopen", &dmg.to_string_lossy()])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 && parts[1].starts_with("/Volumes/") {
+            return Ok(PathBuf::from(parts[1]));
+        }
+    }
+    Err("could not locate mounted volume".into())
+}
+
+#[cfg(target_os = "macos")]
+fn detach_dmg(mount: &Path) {
+    let _ = std::process::Command::new("hdiutil")
+        .args(["detach", &mount.to_string_lossy(), "-force"])
+        .output();
+}
+
+#[cfg(target_os = "macos")]
+fn find_in_volume(mount: &Path) -> Result<PathBuf, String> {
+    for entry in std::fs::read_dir(mount).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("app") {
+            return Ok(path);
+        }
+    }
+    Err("no .app found in update disk image".into())
+}
+
+#[cfg(target_os = "macos")]
+fn install_app(new_app: &Path, current_app: &Path) -> Result<(), String> {
+    let dest_parent = current_app.parent().ok_or("bad app path")?;
+    let dest = dest_parent.join(
+        current_app
+            .file_name()
+            .ok_or("bad app name")?,
+    );
+
+    let out = std::process::Command::new("cp")
+        .args(["-Rf", &new_app.to_string_lossy(), &dest_parent.to_string_lossy()])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+
+    // Clear any quarantine so Gatekeeper doesn't block the freshly copied app.
+    let _ = std::process::Command::new("xattr")
+        .args(["-dr", "com.apple.quarantine", &dest.to_string_lossy()])
+        .output();
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn relaunch(app: &Path) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg("-n")
+        .arg(app)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    std::process::exit(0);
+}
+
+#[cfg(target_os = "macos")]
+fn show_notification(message: &str) {
     let script = format!(
-        "display notification \"Version {} is available\" with title \"vterm\" subtitle \"Update ready\"",
-        info.version
+        "display notification \"{}\" with title \"vterm\" subtitle \"Updating\"",
+        message.replace('"', "")
     );
     let _ = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
         .output();
-    let _ = std::process::Command::new("open").arg(&info.download_url).output();
 }
 
 #[cfg(test)]
