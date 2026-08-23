@@ -1,0 +1,23 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+#terminal-demo .prompt { color: #58a6ff; }
+#terminal-demo .cmd { color: #e6e1cf; }
+#terminal-demo .out { color: #8b949e; }
+#terminal-demo .ok { color: #3fb950; }
+
+.theme-card {
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.theme-card:hover {
+  transform: translateY(-2px);
+}
+.theme-card.active {
+  border-color: #58a6ff;
+}

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>vterm — GPU-accelerated terminal emulator</title>
+  <meta name="description" content="vterm is a high-performance, GPU-accelerated terminal emulator built in Rust with the GPUI framework." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0d1117',
+            panel: '#161b22',
+            edge: '#30363d',
+            accent: '#58a6ff',
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="./css/styles.css" />
+</head>
+<body class="bg-ink text-gray-200 font-mono antialiased">
+  <!-- Navbar -->
+  <header class="sticky top-0 z-50 backdrop-blur bg-ink/80 border-b border-edge">
+    <nav class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="#top" class="flex items-center gap-2 font-bold text-lg text-white">
+        <span class="inline-block w-3 h-3 rounded-sm bg-accent"></span> vterm
+      </a>
+      <div class="hidden md:flex items-center gap-8 text-sm">
+        <a class="hover:text-accent transition" href="#features">Features</a>
+        <a class="hover:text-accent transition" href="#themes">Themes</a>
+        <a class="hover:text-accent transition" href="#install">Install</a>
+        <a class="hover:text-accent transition" href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer">GitHub</a>
+      </div>
+      <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.zip" class="px-4 py-2 rounded-md bg-accent text-ink font-semibold text-sm hover:opacity-90 transition">Download</a>
+    </nav>
+  </header>
+
+  <!-- Hero -->
+  <section id="top" class="relative overflow-hidden">
+    <div class="absolute inset-0 bg-gradient-to-br from-accent/10 via-transparent to-transparent"></div>
+    <div class="max-w-6xl mx-auto px-6 pt-20 pb-16 grid md:grid-cols-2 gap-12 items-center relative">
+      <div>
+        <span class="inline-block px-3 py-1 rounded-full border border-edge text-xs text-accent mb-5">Built with Rust + GPUI</span>
+        <h1 class="text-4xl md:text-5xl font-bold text-white leading-tight">
+          A blazing-fast,<br /><span class="text-accent">GPU-accelerated</span><br />terminal emulator.
+        </h1>
+        <p class="mt-5 text-gray-400 max-w-md">
+          Native rendering, truecolor support, workspaces, tabs, and git integration — everything you need, nothing you don't.
+        </p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.zip" class="px-5 py-3 rounded-md bg-accent text-ink font-semibold hover:opacity-90 transition">Download for macOS</a>
+          <a href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer" class="px-5 py-3 rounded-md border border-edge hover:border-accent hover:text-accent transition">View Source</a>
+        </div>
+        <div class="mt-8 flex items-center gap-6 text-sm text-gray-500">
+          <span><strong class="text-white">256</strong> colors</span>
+          <span><strong class="text-white">12+</strong> themes</span>
+          <span><strong class="text-white">∞</strong> tabs</span>
+        </div>
+      </div>
+      <div class="relative">
+        <div class="rounded-xl border border-edge bg-panel shadow-2xl overflow-hidden">
+          <div class="flex items-center gap-2 px-4 py-3 border-b border-edge">
+            <span class="w-3 h-3 rounded-full bg-red-500"></span>
+            <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+            <span class="w-3 h-3 rounded-full bg-green-500"></span>
+            <span class="ml-3 text-xs text-gray-500">~/projects/vterm</span>
+          </div>
+          <pre class="p-4 text-sm leading-relaxed"><code id="terminal-demo"></code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features" class="max-w-6xl mx-auto px-6 py-20">
+    <h2 class="text-3xl font-bold text-white text-center">Why vterm?</h2>
+    <div class="mt-12 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
+        <h3 class="text-lg font-semibold text-white">Blazing Fast</h3>
+        <p class="mt-2 text-sm text-gray-400">Powered by GPUI for native, GPU-accelerated rendering with minimal latency.</p>
+      </div>
+      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
+        <h3 class="text-lg font-semibold text-white">TrueColor Support</h3>
+        <p class="mt-2 text-sm text-gray-400">Full 256-color and truecolor support natively interpreted from ANSI escapes.</p>
+      </div>
+      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
+        <h3 class="text-lg font-semibold text-white">Workspaces & Tabs</h3>
+        <p class="mt-2 text-sm text-gray-400">Multiple isolated workspaces, sidebar navigation, and multi-tabbed terminals.</p>
+      </div>
+      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
+        <h3 class="text-lg font-semibold text-white">Git Integration</h3>
+        <p class="mt-2 text-sm text-gray-400">See your current branch in the title bar. Click to switch branches instantly.</p>
+      </div>
+      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
+        <h3 class="text-lg font-semibold text-white">Customizable Themes</h3>
+        <p class="mt-2 text-sm text-gray-400">Ubuntu, Zed Dark, Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more.</p>
+      </div>
+      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
+        <h3 class="text-lg font-semibold text-white">Persisted State</h3>
+        <p class="mt-2 text-sm text-gray-400">Your tabs, workspaces, and theme selections persist across restarts.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Themes (interactive) -->
+  <section id="themes" class="border-y border-edge bg-panel/40">
+    <div class="max-w-6xl mx-auto px-6 py-20">
+      <h2 class="text-3xl font-bold text-white text-center">Pick your vibe</h2>
+      <p class="text-center text-gray-400 mt-3">Click a theme to preview it live.</p>
+      <div id="theme-grid" class="mt-10 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"></div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install" class="max-w-6xl mx-auto px-6 py-20">
+    <h2 class="text-3xl font-bold text-white text-center">Install</h2>
+    <div class="mt-10 max-w-2xl mx-auto flex flex-col items-center gap-6">
+      <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.zip"
+         class="w-full text-center px-6 py-4 rounded-xl bg-accent text-ink font-semibold text-lg hover:opacity-90 transition">
+        ⬇ Download vterm for macOS
+      </a>
+      <p class="text-gray-500 text-sm">Prebuilt · no compiler required · unzip and open <code>vterm.app</code></p>
+
+      <details class="w-full rounded-xl border border-edge bg-panel overflow-hidden">
+        <summary class="px-4 py-3 cursor-pointer text-sm text-gray-300 hover:text-accent transition">Build from source instead</summary>
+        <pre class="p-4 text-sm overflow-x-auto border-t border-edge"><code>git clone https://github.com/boytur/vterm.git
+cd vterm
+cargo run --release</code></pre>
+      </details>
+    </div>
+    <p class="text-center text-gray-500 mt-6 text-sm">
+      Requires macOS. Linux/Windows support depends on GPUI.
+    </p>
+  </section>
+
+  <footer class="border-t border-edge">
+    <div class="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-500">
+      <span>© <span id="year"></span> vterm · MIT</span>
+      <div class="flex gap-6">
+        <a class="hover:text-accent transition" href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer">GitHub</a>
+        <a class="hover:text-accent transition" href="#top">Back to top</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./js/main.js"></script>
+</body>
+</html>
