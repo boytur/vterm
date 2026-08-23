@@ -40,7 +40,7 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
         };
         
         let expected_cols = ((f32::from(viewport.width) - 192.0 - 32.0) / 8.4).max(10.0) as u16;
-        let expected_rows = ((f32::from(viewport.height) - 32.0 - 32.0) / 20.0).max(10.0) as u16;
+        let expected_rows = ((f32::from(viewport.height) - 64.0 - 48.0) / 20.0).max(10.0) as u16;
         
         if expected_cols != cols_count || expected_rows != rows_count {
             let term_model = term_model.clone();
@@ -149,7 +149,9 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
         .w_full()
         .h_full()
         .bg(theme.bg_main)
-        .p_4()
+        .px_4()
+        .pt_4()
+        .pb_8()
         .font_family("Menlo")
         .text_size(px(14.0))
         .line_height(relative(1.0))
