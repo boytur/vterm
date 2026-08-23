@@ -39,6 +39,10 @@ jobs:
       - name: Package .dmg
         run: |
           APP_NAME=vterm
+          APP_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          if [[ "${GITHUB_REF_NAME:-}" == v* ]]; then
+            APP_VERSION="${GITHUB_REF_NAME#v}"
+          fi
           BIN_PATH="target/release/$APP_NAME"
           APP_DIR="$APP_NAME.app"
           DEST="$APP_DIR/Contents/MacOS"
@@ -46,7 +50,7 @@ jobs:
           cp "$BIN_PATH" "$DEST/$APP_NAME"
           mkdir -p "$APP_DIR/Contents/Resources"
           cp assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
-          cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+          cat > "$APP_DIR/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -62,9 +66,9 @@ jobs:
             <key>CFBundleIdentifier</key>
             <string>com.vterm.app</string>
             <key>CFBundleVersion</key>
-            <string>${GITHUB_REF_NAME}</string>
+            <string>${APP_VERSION}</string>
             <key>CFBundleShortVersionString</key>
-            <string>${GITHUB_REF_NAME}</string>
+            <string>${APP_VERSION}</string>
             <key>LSMinimumSystemVersion</key>
             <string>11.0</string>
             <key>NSHighResolutionCapable</key>
@@ -72,6 +76,7 @@ jobs:
           </dict>
           </plist>
           PLIST
+          plutil -lint "$APP_DIR/Contents/Info.plist"
           # Build a distributable DMG with a drag-to-Applications shortcut
           STAGING="dmg_staging"
           rm -rf "$STAGING"
