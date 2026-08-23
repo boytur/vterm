@@ -1,0 +1,80 @@
+name: CD - Build Prod (macOS)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  build-prod:
+    name: Build Release (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-prod-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release
+        run: cargo build --release --verbose
+
+      - name: Package .app bundle
+        run: |
+          APP_NAME=vterm
+          BIN_PATH="target/release/$APP_NAME"
+          DEST="$APP_NAME.app/Contents/MacOS"
+          mkdir -p "$DEST"
+          cp "$BIN_PATH" "$DEST/$APP_NAME"
+          cat > "$APP_NAME.app/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>vterm</string>
+            <key>CFBundleDisplayName</key>
+            <string>vterm</string>
+            <key>CFBundleExecutable</key>
+            <string>vterm</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.vterm.app</string>
+            <key>CFBundleVersion</key>
+            <string>${GITHUB_REF_NAME}</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${GITHUB_REF_NAME}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>11.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$APP_NAME-macos.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vterm-macos
+          path: vterm-macos.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vterm-macos.zip
