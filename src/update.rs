@@ -35,7 +35,7 @@ pub fn check_for_update() -> Option<UpdateInfo> {
     let release: Release = resp.into_json().ok()?;
 
     let latest = release.tag_name.trim_start_matches('v');
-    if !is_newer(latest, CURRENT_VERSION) {
+    if !is_newer(latest, CURRENT_VERSION.trim_start_matches('v')) {
         return None;
     }
 

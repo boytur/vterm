@@ -14,5 +14,9 @@ fn main() {
         })
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
+    // Strip a leading "v" so VTERM_VERSION matches the bare version the GitHub
+    // release tag is compared against (e.g. "0.1.3", not "v0.1.3").
+    let version = version.trim_start_matches('v').to_string();
+
     println!("cargo:rustc-env=VTERM_VERSION={}", version);
 }
