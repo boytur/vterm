@@ -226,3 +226,102 @@ impl Drop for PtyTerminal {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn test_open_and_spawn_pty() {
+        let (m, s) = unsafe { open_pty(24, 80) }.expect("open_pty");
+        let pid = unsafe { spawn_shell(m, s, "/bin/sh", None) }.expect("spawn_shell");
+        unsafe {
+            libc::close(s);
+        }
+
+        let mut master = unsafe { std::fs::File::from_raw_fd(m) };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        master.write_all(b"echo pty_ok\r").ok();
+        master.flush().ok();
+
+        let mut buf = [0u8; 1024];
+        let mut got = String::new();
+        for _ in 0..40 {
+            match master.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    got.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if got.contains("pty_ok") {
+                        break;
+                    }
+                }
+                _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+
+        unsafe {
+            libc::kill(-pid, libc::SIGHUP);
+        }
+        assert!(got.contains("pty_ok"), "pty output was: {:?}", got);
+    }
+
+    #[test]
+    fn test_reader_channel_pipeline() {
+        use std::sync::mpsc::channel;
+        use std::sync::{Arc, Mutex};
+
+        let (m, s) = unsafe { open_pty(24, 80) }.expect("open_pty");
+        let pid = unsafe { spawn_shell(m, s, "/bin/sh", None) }.expect("spawn_shell");
+        unsafe {
+            libc::close(s);
+        }
+
+        let reader = unsafe { std::fs::File::from_raw_fd(libc::dup(m)) };
+        let mut writer = unsafe { std::fs::File::from_raw_fd(libc::dup(m)) };
+        unsafe {
+            libc::close(m);
+        }
+
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 0)));
+        let parser_clone = parser.clone();
+        let (tx, rx) = channel();
+
+        std::thread::spawn(move || {
+            let mut reader = reader;
+            let mut buf = [0u8; 8192];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                if tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        writer.write_all(b"echo pipe_ok\r").ok();
+        writer.flush().ok();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut found = false;
+        while std::time::Instant::now() < deadline {
+            while let Ok(bytes) = rx.try_recv() {
+                parser_clone.lock().unwrap().process(&bytes);
+                let screen = parser_clone.lock().unwrap().screen().contents();
+                if screen.contains("pipe_ok") {
+                    found = true;
+                }
+            }
+            if found {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        unsafe {
+            libc::kill(-pid, libc::SIGHUP);
+        }
+        assert!(found, "parser screen never contained pipe_ok");
+    }
+}
