@@ -123,6 +123,7 @@ mod tests {
             active_workspace: 0,
             theme: crate::theme::Theme::ubuntu(),
             theme_name: Some("ubuntu".to_string()),
+            font_size: crate::state::DEFAULT_FONT_SIZE,
         };
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].name, "Workspace");

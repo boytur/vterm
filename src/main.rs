@@ -36,7 +36,7 @@ fn main() {
             }),
             ..Default::default()
         };
-        cx.open_window(options, |_window, cx| cx.new(|cx| Workspace::new(cx)))
+        cx.open_window(options, |_window, cx| cx.new(Workspace::new))
             .expect("failed to open window");
 
         spawn_update_checker();

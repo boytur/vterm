@@ -102,8 +102,8 @@ impl Workspace {
             async move {
                 let (branch, _cwd) = executor.spawn(async move {
                     let mut cwd = None;
-                    if let Some(pid) = active_pid {
-                        if let Ok(output) = std::process::Command::new("lsof")
+                    if let Some(pid) = active_pid
+                        && let Ok(output) = std::process::Command::new("lsof")
                             .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
                             .output()
                         {
@@ -115,11 +115,10 @@ impl Workspace {
                                 }
                             }
                         }
-                    }
                     
                     let mut branch = String::new();
-                    if let Some(ref c) = cwd {
-                        if let Ok(output) = std::process::Command::new("git")
+                    if let Some(ref c) = cwd
+                        && let Ok(output) = std::process::Command::new("git")
                             .args(["branch", "--show-current"])
                             .current_dir(c)
                             .output()
@@ -127,7 +126,6 @@ impl Workspace {
                             let stdout = String::from_utf8_lossy(&output.stdout);
                             branch = stdout.trim().to_string();
                         }
-                    }
                     (branch, cwd)
                 }).await;
 
@@ -158,9 +156,9 @@ impl Workspace {
 
     pub fn toggle_branch_menu(&mut self, cx: &mut Context<Self>) {
         self.branch_menu_open = !self.branch_menu_open;
-        if self.branch_menu_open {
-            if let Some(cwd) = self.get_active_terminal_cwd(cx) {
-                if let Ok(output) = std::process::Command::new("git")
+        if self.branch_menu_open
+            && let Some(cwd) = self.get_active_terminal_cwd(cx)
+                && let Ok(output) = std::process::Command::new("git")
                     .args(["branch", "--format=%(refname:short)"])
                     .current_dir(cwd)
                     .output()
@@ -168,8 +166,6 @@ impl Workspace {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
                 }
-            }
-        }
         cx.notify();
     }
     
@@ -179,15 +175,13 @@ impl Workspace {
                 .args(["checkout", branch])
                 .current_dir(&cwd)
                 .output()
-            {
-                if !output.status.success() {
+                && !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     self.alert_modal = Some((
                         "Git Checkout Failed".to_string(),
                         stderr.to_string(),
                     ));
                 }
-            }
                 
             if let Ok(output) = std::process::Command::new("git")
                 .args(["branch", "--show-current"])
@@ -267,13 +261,12 @@ impl Workspace {
 
     fn active_screen_size(&self, cx: &App) -> (u16, u16) {
         let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get(ws_idx) {
-            if let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
+        if let Some(ws) = self.state.workspaces.get(ws_idx)
+            && let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
                 let term = term.read(cx);
                 let parser = term.parser.lock().unwrap();
                 return parser.screen().size();
             }
-        }
         (24, 80)
     }
 
@@ -319,8 +312,8 @@ impl Workspace {
     }
 
     pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
-        if let Some(text) = self.selected_text(cx) {
-            if !text.trim().is_empty() {
+        if let Some(text) = self.selected_text(cx)
+            && !text.trim().is_empty() {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                 self.toast = Some("Copied!".to_string());
                 cx.spawn(|this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
@@ -335,24 +328,21 @@ impl Workspace {
                 }).detach();
                 cx.notify();
             }
-        }
     }
 
     pub fn write_active(&mut self, bytes: &[u8], cx: &mut App) {
         let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get(ws_idx) {
-            if let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
+        if let Some(ws) = self.state.workspaces.get(ws_idx)
+            && let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
                 term.update(cx, |term, _| term.write(bytes));
             }
-        }
     }
 
     pub fn paste_clipboard(&mut self, cx: &mut App) {
-        if let Some(item) = cx.read_from_clipboard() {
-            if let Some(text) = item.text() {
+        if let Some(item) = cx.read_from_clipboard()
+            && let Some(text) = item.text() {
                 self.write_active(text.as_bytes(), cx);
             }
-        }
     }
 
     pub fn on_terminal_mouse_down(
@@ -379,13 +369,12 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selecting {
-            if let Some((start, _)) = self.selection {
+        if self.selecting
+            && let Some((start, _)) = self.selection {
                 let cell = self.cell_at(event.position, cx);
                 self.selection = Some((start, cell));
                 cx.notify();
             }
-        }
     }
 
     pub fn on_terminal_mouse_up(
@@ -423,14 +412,13 @@ impl Workspace {
         let delta_pixels = event.delta.pixel_delta(px(font_size)).y;
         let delta_lines = f32::from(delta_pixels) / cell_h;
 
-        if let Some(ws) = self.state.workspaces.get(ws_idx) {
-            if let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(ws.active_term)) {
+        if let Some(ws) = self.state.workspaces.get(ws_idx)
+            && let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(ws.active_term)) {
                 term_entity.update(cx, |term, _| {
                     term.scroll(delta_lines);
                 });
                 cx.notify();
             }
-        }
     }
 
     pub fn handle_key_down(
@@ -603,7 +591,6 @@ impl Workspace {
                 self.renaming_dir_modal = Some((idx, current_name));
             }
             cx.notify();
-            return;
         }
     }
 
@@ -657,8 +644,8 @@ impl Workspace {
 
     pub fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
         let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
-            if from != to && from < ws.terminals.len() && to <= ws.terminals.len() {
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
+            && from != to && from < ws.terminals.len() && to <= ws.terminals.len() {
                 let term_data = ws.terminals.remove(from);
                 let term = self.terminals[ws_idx].remove(from);
                 let new_to = if from < to { to - 1 } else { to };
@@ -670,7 +657,6 @@ impl Workspace {
                 self.state.save().ok();
                 cx.notify();
             }
-        }
     }
 
     pub fn open_tab_menu(&mut self, idx: usize, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
@@ -685,13 +671,12 @@ impl Workspace {
 
     pub fn select_term(&mut self, idx: usize, cx: &mut Context<Self>) {
         let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
-            if idx < ws.terminals.len() {
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
+            && idx < ws.terminals.len() {
                 ws.active_term = idx;
                 self.state.save().ok();
                 cx.notify();
             }
-        }
     }
 
     pub fn delete_term(&mut self, idx: usize, cx: &mut Context<Self>) {
@@ -717,12 +702,11 @@ impl Workspace {
 
     pub fn start_renaming_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
         let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get(ws_idx) {
-            if let Some(term) = ws.terminals.get(idx) {
+        if let Some(ws) = self.state.workspaces.get(ws_idx)
+            && let Some(term) = ws.terminals.get(idx) {
                 self.renaming_tab_modal = Some((idx, term.name.clone()));
                 cx.notify();
             }
-        }
     }
 
     pub fn start_renaming_dir(&mut self, idx: usize, cx: &mut Context<Self>) {

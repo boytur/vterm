@@ -34,8 +34,8 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
     let mut selection_overlay = div();
     let mut scrollbar_element = div();
 
-    if let Some(ws) = workspace.state.workspaces.get(workspace.state.active_workspace) {
-        if let Some(term_model) = workspace.terminals.get(workspace.state.active_workspace).and_then(|t| t.get(ws.active_term)) {
+    if let Some(ws) = workspace.state.workspaces.get(workspace.state.active_workspace)
+        && let Some(term_model) = workspace.terminals.get(workspace.state.active_workspace).and_then(|t| t.get(ws.active_term)) {
             let (rows_count, cols_count) = {
                 let term = term_model.read(cx);
             let parser = term.parser.lock().unwrap();
@@ -244,7 +244,6 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                     .children(line_children)
             );
         }
-    }
     }
 
     div()
