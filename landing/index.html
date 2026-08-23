@@ -86,9 +86,19 @@
           <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg" class="px-5 py-3 rounded-md bg-accent text-ink font-semibold hover:opacity-90 transition">Download for macOS</a>
           <a href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer" class="px-5 py-3 rounded-md border border-edge hover:border-accent hover:text-accent transition">View Source</a>
         </div>
+        <div class="mt-6 max-w-lg">
+          <div class="mb-2 flex items-center justify-between text-xs text-gray-500">
+            <span>Quick install</span>
+            <span>macOS</span>
+          </div>
+          <div class="flex items-center gap-3 rounded-md border border-edge bg-panel px-3 py-2">
+            <code id="hero-install-command" class="min-w-0 flex-1 break-all text-xs text-gray-300">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code>
+            <button type="button" data-copy-target="hero-install-command" class="shrink-0 rounded border border-edge px-2 py-1 text-xs text-accent hover:border-accent transition" aria-label="Copy install command">Copy</button>
+          </div>
+        </div>
         <div class="mt-8 flex items-center gap-6 text-sm text-gray-500">
           <span><strong class="text-white">256</strong> colors</span>
-          <span><strong class="text-white">12+</strong> themes</span>
+          <span><strong class="text-white">27</strong> themes</span>
           <span><strong class="text-white">∞</strong> tabs</span>
         </div>
       </div>
@@ -162,7 +172,7 @@
     <div class="max-w-3xl mx-auto">
       <div class="flex items-center justify-between gap-4">
         <h2 class="text-3xl font-bold text-white">What's new</h2>
-        <span class="px-3 py-1 rounded-full border border-accent text-xs text-accent">Next release</span>
+        <span class="px-3 py-1 rounded-full border border-accent text-xs text-accent">v0.2.4</span>
       </div>
       <div class="mt-8 rounded-xl border border-edge bg-panel p-6">
         <h3 class="text-lg font-semibold text-white">Themes, settings, and safer updates</h3>
@@ -181,8 +191,9 @@
   <section id="install" class="max-w-6xl mx-auto px-6 py-20">
     <h2 class="text-3xl font-bold text-white text-center">Install</h2>
     <div class="mt-10 max-w-2xl mx-auto flex flex-col items-center gap-6">
-      <div class="w-full rounded-xl border border-edge bg-panel overflow-hidden">
-        <pre class="p-4 text-sm overflow-x-auto"><code>curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code></pre>
+      <div class="relative w-full rounded-xl border border-edge bg-panel overflow-hidden">
+        <pre class="p-4 pr-20 text-sm overflow-x-auto"><code id="install-command">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code></pre>
+        <button type="button" data-copy-target="install-command" class="absolute right-3 top-3 rounded border border-edge px-2 py-1 text-xs text-accent hover:border-accent transition" aria-label="Copy install command">Copy</button>
       </div>
       <p class="text-gray-500 text-sm">Installs straight to /Applications · no Gatekeeper warning</p>
 
