@@ -26,4 +26,3 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           projectName: vterm
           directory: landing
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
