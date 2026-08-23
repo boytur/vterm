@@ -16,7 +16,8 @@ echo "Downloading ${APP_NAME}..."
 curl -fsSL "$URL" -o "$TMP_DIR/${APP_NAME}.dmg"
 
 echo "Installing to /Applications..."
-MOUNT_DIR=$(hdiutil attach "$TMP_DIR/${APP_NAME}.dmg" -nobrowse -quiet | awk -F'\t' '/\/Volumes\// {print $NF; exit}')
+MOUNT_DIR=$(hdiutil attach "$TMP_DIR/${APP_NAME}.dmg" -nobrowse -plist |
+  grep -A1 '<key>mount-point</key>' | grep string | sed -E 's/.*<string>(.*)<\/string>.*/\1/')
 rm -rf "/Applications/${APP_NAME}.app"
 cp -R "$MOUNT_DIR/${APP_NAME}.app" /Applications/
 hdiutil detach "$MOUNT_DIR" -quiet
