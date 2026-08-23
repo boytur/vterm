@@ -95,3 +95,29 @@ impl AppState {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_app_state() {
+        let state = AppState {
+            workspaces: vec![WorkspaceData {
+                name: "Workspace".into(),
+                terminals: vec![TerminalData {
+                    name: "Terminal".into(),
+                    cwd: None,
+                }],
+                active_term: 0,
+            }],
+            active_workspace: 0,
+            theme: crate::theme::Theme::ubuntu(),
+            theme_name: Some("ubuntu".to_string()),
+        };
+        assert_eq!(state.workspaces.len(), 1);
+        assert_eq!(state.workspaces[0].name, "Workspace");
+        assert_eq!(state.workspaces[0].terminals.len(), 1);
+        assert_eq!(state.workspaces[0].terminals[0].name, "Terminal");
+    }
+}
