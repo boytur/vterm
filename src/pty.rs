@@ -93,6 +93,9 @@ unsafe fn spawn_shell(
     let shell_c =
         CString::new(shell).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "shell"))?;
     let login_arg = CString::new("-l").unwrap();
+    let cwd_c = cwd
+        .map(|c| CString::new(c).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "cwd")))
+        .transpose()?;
 
     let pid = unsafe { libc::fork() };
     if pid < 0 {
@@ -109,33 +112,10 @@ unsafe fn spawn_shell(
             if slave_fd > 2 {
                 libc::close(slave_fd);
             }
-        }
-
-        let _ = unsafe {
-            libc::setenv(
-                CString::new("TERM").unwrap().as_ptr(),
-                CString::new("xterm-256color").unwrap().as_ptr(),
-                1,
-            )
-        };
-        let _ = unsafe {
-            libc::setenv(
-                CString::new("COLORTERM").unwrap().as_ptr(),
-                CString::new("truecolor").unwrap().as_ptr(),
-                1,
-            )
-        };
-
-        if let Some(cwd) = cwd {
-            if let Ok(cwd_c) = CString::new(cwd) {
-                unsafe {
-                    libc::chdir(cwd_c.as_ptr());
-                }
+            if let Some(cwd_c) = &cwd_c {
+                libc::chdir(cwd_c.as_ptr());
             }
-        }
-
-        let argv: [*const libc::c_char; 3] = [shell_c.as_ptr(), login_arg.as_ptr(), ptr::null()];
-        unsafe {
+            let argv: [*const libc::c_char; 3] = [shell_c.as_ptr(), login_arg.as_ptr(), ptr::null()];
             libc::execvp(shell_c.as_ptr(), argv.as_ptr());
             libc::_exit(127);
         }
@@ -147,6 +127,10 @@ impl PtyTerminal {
     pub fn new_with_cwd(cwd: Option<String>, cx: &mut Context<Self>) -> Self {
         let (master_fd, slave_fd) = unsafe { open_pty(24, 80).expect("failed to open pty") };
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string());
+        unsafe {
+            std::env::set_var("TERM", "xterm-256color");
+            std::env::set_var("COLORTERM", "truecolor");
+        }
         let child_pid = unsafe {
             spawn_shell(master_fd, slave_fd, &shell, cwd.as_deref()).expect("failed to spawn shell")
         };
