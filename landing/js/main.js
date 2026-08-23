@@ -35,45 +35,40 @@
   ];
 
   const grid = document.getElementById("theme-grid");
-  themes.forEach((t, i) => {
+  themes.forEach((t) => {
     const card = document.createElement("button");
-    card.className =
-      "theme-card text-left p-4 rounded-xl border border-edge bg-panel";
+    card.className = "theme-card";
+    card.type = "button";
+    card.setAttribute("aria-pressed", "false");
     card.innerHTML = `
-      <div class="flex items-center gap-2 mb-3">
-        <span class="w-4 h-4 rounded-full" style="background:${t.bg};border:1px solid #30363d"></span>
-        <span class="w-4 h-4 rounded-full" style="background:${t.accent}"></span>
+      <div class="theme-swatches" aria-hidden="true">
+        <span class="theme-swatch" style="background:${t.bg}"></span>
+        <span class="theme-swatch" style="background:${t.accent}"></span>
       </div>
-      <div class="text-sm text-white font-semibold">${t.name}</div>`;
+      <span class="theme-name">${t.name}</span>`;
     card.addEventListener("click", () => applyTheme(t, card));
     grid.appendChild(card);
   });
 
   function applyTheme(t, card) {
-    document.documentElement.style.setProperty("--tw-prose-links", t.accent);
-    document.querySelectorAll(".theme-card").forEach((c) => c.classList.remove("active"));
+    document.documentElement.style.setProperty("--accent", t.accent);
+    document.documentElement.style.setProperty("--accent-bright", t.accent);
+    document.querySelectorAll(".theme-card").forEach((c) => {
+      c.classList.remove("active");
+      c.setAttribute("aria-pressed", "false");
+    });
     card.classList.add("active");
-    document.querySelectorAll(".text-accent").forEach((el) => {
-      el.style.color = t.accent;
-    });
-    document.querySelectorAll(".bg-accent").forEach((el) => {
-      el.style.backgroundColor = t.accent;
-    });
-    document.querySelectorAll(".border-accent").forEach((el) => {
-      el.style.borderColor = t.accent;
-    });
+    card.setAttribute("aria-pressed", "true");
   }
 
   async function loadChangelog() {
     const version = document.getElementById("release-version");
     const title = document.getElementById("release-title");
     const items = document.getElementById("release-items");
-    const history = document.getElementById("release-history");
+    const history = document.getElementById("release-history-list");
 
     try {
-      const response = await fetch("./changelog.md", { cache: "no-store" });
-      if (!response.ok) throw new Error("changelog unavailable");
-      const releases = parseChangelog(await response.text());
+      const releases = parseChangelog(await fetchChangelog());
       const unreleased = releases.find((release) => release.version === "Unreleased" && release.items.length);
       const latest = releases.find((release) => release.version !== "Unreleased");
       const featured = unreleased || latest;
@@ -90,6 +85,20 @@
       message.textContent = "See GitHub for the latest release history.";
       items.replaceChildren(message);
     }
+  }
+
+  async function fetchChangelog() {
+    const sources = [
+      "./changelog.md",
+      "https://raw.githubusercontent.com/boytur/vterm/master/CHANGELOG.md",
+    ];
+    for (const source of sources) {
+      try {
+        const response = await fetch(source, { cache: "no-store" });
+        if (response.ok) return response.text();
+      } catch {}
+    }
+    throw new Error("changelog unavailable");
   }
 
   function parseChangelog(markdown) {
@@ -170,10 +179,10 @@
 
   const demoLines = [
     { cls: "prompt", text: "$ " },
-    { cls: "cmd", text: "cargo run --release\n" },
-    { cls: "out", text: "   Compiling vterm v0.1.0\n" },
-    { cls: "ok", text: "    Finished release [optimized]\n" },
-    { cls: "out", text: "  vterm ready · 27 themes loaded\n" },
+    { cls: "cmd", text: "cd ~/projects/vterm\n" },
+    { cls: "cmd", text: "git status --short\n" },
+    { cls: "ok", text: "  working tree clean\n" },
+    { cls: "out", text: "  vterm ready · 27 themes · sessions restored\n" },
   ];
 
   const demo = document.getElementById("terminal-demo");

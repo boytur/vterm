@@ -2,236 +2,313 @@
 <html lang="en" class="scroll-smooth">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <!-- Basic SEO -->
-  <title>vterm — The Blazing Fast GPU-Accelerated Terminal</title>
-  <meta name="description" content="vterm is a high-performance, GPU-accelerated terminal emulator built in Rust with the GPUI framework. Designed for developers who demand speed and reliability." />
-  <meta name="keywords" content="terminal, emulator, rust, gpui, gpu-accelerated, developer tools, command line, vterm" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+
+  <title>vterm | A fast, GPU-accelerated terminal for macOS</title>
+  <meta name="description" content="vterm is a free, open-source terminal emulator for macOS. Built in Rust with GPUI, it brings GPU rendering, workspaces, tabs, themes, and git context together." />
   <meta name="author" content="vterm contributors" />
-  <meta name="robots" content="index, follow" />
-  
-  <!-- Canonical URL (Update with actual domain) -->
+  <meta name="robots" content="index, follow, max-image-preview:large" />
   <link rel="canonical" href="https://vterm.piyawat.dev/" />
 
-  <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="vterm" />
+  <meta property="og:locale" content="en_US" />
   <meta property="og:url" content="https://vterm.piyawat.dev/" />
-  <meta property="og:title" content="vterm — The Blazing Fast GPU-Accelerated Terminal" />
-  <meta property="og:description" content="Experience lightning-fast command line operations with vterm. Built in Rust and powered by GPUI for maximum performance." />
+  <meta property="og:title" content="vterm | A fast, GPU-accelerated terminal for macOS" />
+  <meta property="og:description" content="A free, open-source macOS terminal emulator built in Rust with GPUI. Workspaces, tabs, themes, git context, and in-app updates." />
   <meta property="og:image" content="https://vterm.piyawat.dev/assets/og-image.png" />
+  <meta property="og:image:alt" content="vterm terminal window with workspaces and multiple tabs" />
 
-  <!-- Twitter -->
-  <meta property="twitter:card" content="summary_large_image" />
-  <meta property="twitter:url" content="https://vterm.piyawat.dev/" />
-  <meta property="twitter:title" content="vterm — The Blazing Fast GPU-Accelerated Terminal" />
-  <meta property="twitter:description" content="Experience lightning-fast command line operations with vterm. Built in Rust and powered by GPUI for maximum performance." />
-  <meta property="twitter:image" content="https://vterm.piyawat.dev/assets/og-image.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:url" content="https://vterm.piyawat.dev/" />
+  <meta name="twitter:title" content="vterm | A fast, GPU-accelerated terminal for macOS" />
+  <meta name="twitter:description" content="A free, open-source macOS terminal emulator built in Rust with GPUI." />
+  <meta name="twitter:image" content="https://vterm.piyawat.dev/assets/og-image.png" />
+  <meta name="twitter:image:alt" content="vterm terminal window with workspaces and multiple tabs" />
 
-  <!-- Favicons -->
-  <link rel="icon" type="image/png" href="./assets/favicon.png" />
-  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            ink: '#0d1117',
-            panel: '#161b22',
-            edge: '#30363d',
-            accent: '#58a6ff',
-          },
-          fontFamily: {
-            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
-          },
-        },
-      },
-    };
-  </script>
+  <link rel="icon" type="image/jpeg" href="./assets/logo.jpg" />
+  <link rel="apple-touch-icon" href="./assets/logo.jpg" />
+  <link rel="sitemap" type="application/xml" href="./sitemap.xml" />
   <link rel="stylesheet" href="./css/styles.css" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "vterm",
+        "description": "A free, open-source GPU-accelerated terminal emulator for macOS, built in Rust with GPUI.",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS",
+        "downloadUrl": "https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg",
+        "installUrl": "https://raw.githubusercontent.com/boytur/vterm/master/install.sh",
+        "isAccessibleForFree": true,
+        "codeRepository": "https://github.com/boytur/vterm",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      },
+      {
+        "@type": "WebSite",
+        "name": "vterm",
+        "url": "https://vterm.piyawat.dev/",
+        "publisher": {
+          "@type": "Organization",
+          "name": "vterm contributors",
+          "url": "https://github.com/boytur/vterm"
+        }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What is vterm?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "vterm is a free, open-source terminal emulator for macOS. It is written in Rust and uses GPUI for native GPU-accelerated rendering."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What does vterm support?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "vterm supports truecolor and 256-color terminal output, workspaces, tabs, git branch context, 27 built-in themes, persistent terminal state, and in-app updates."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I install vterm?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "On macOS, run curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash, or download the latest DMG from GitHub Releases."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is vterm free and open source?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. vterm is published under the MIT license and its source code is available on GitHub."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
-<body class="bg-ink text-gray-200 font-mono antialiased">
-  <!-- Navbar -->
-  <header class="sticky top-0 z-50 backdrop-blur bg-ink/80 border-b border-edge">
-    <nav class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-      <a href="#top" class="flex items-center gap-2 font-bold text-lg text-white">
-        <img src="assets/logo.jpg" alt="vterm" class="w-7 h-7 rounded" />
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+
+  <header class="site-header">
+    <nav class="site-nav shell" aria-label="Primary navigation">
+      <a class="brand" href="#top" aria-label="vterm home">
+        <img src="./assets/logo.jpg" alt="" width="32" height="32" />
         <span>vterm</span>
       </a>
-      <div class="hidden md:flex items-center gap-8 text-sm">
-        <a class="hover:text-accent transition" href="#preview">Preview</a>
-        <a class="hover:text-accent transition" href="#features">Features</a>
-        <a class="hover:text-accent transition" href="#themes">Themes</a>
-        <a class="hover:text-accent transition" href="#updates">What's new</a>
-        <a class="hover:text-accent transition" href="#install">Install</a>
-        <a class="hover:text-accent transition" href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer">GitHub</a>
+      <div class="desktop-nav">
+        <a href="#preview">Preview</a>
+        <a href="#features">Features</a>
+        <a href="#themes">Themes</a>
+        <a href="#updates">What's new</a>
+        <a href="#faq">FAQ</a>
       </div>
-      <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg" class="px-4 py-2 rounded-md bg-accent text-ink font-semibold text-sm hover:opacity-90 transition">Download</a>
+      <div class="nav-actions">
+        <a class="nav-source" href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer">GitHub</a>
+        <a class="button button-small button-primary" href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg">Get vterm</a>
+        <details class="mobile-menu">
+          <summary aria-label="Open menu">Menu</summary>
+          <div class="mobile-menu-panel">
+            <a href="#preview">Preview</a>
+            <a href="#features">Features</a>
+            <a href="#themes">Themes</a>
+            <a href="#updates">What's new</a>
+            <a href="#faq">FAQ</a>
+          </div>
+        </details>
+      </div>
     </nav>
   </header>
 
-  <!-- Hero -->
-  <section id="top" class="relative overflow-hidden">
-    <div class="absolute inset-0 bg-gradient-to-br from-accent/10 via-transparent to-transparent"></div>
-    <div class="max-w-6xl mx-auto px-6 pt-20 pb-16 grid md:grid-cols-2 gap-12 items-center relative">
-      <div>
-        <span class="inline-block px-3 py-1 rounded-full border border-edge text-xs text-accent mb-5">Built with Rust + GPUI</span>
-        <h1 class="text-4xl md:text-5xl font-bold text-white leading-tight">
-          A blazing-fast,<br /><span class="text-accent">GPU-accelerated</span><br />terminal emulator.
-        </h1>
-        <p class="mt-5 text-gray-400 max-w-md">
-          Native rendering, truecolor support, workspaces, tabs, and git integration — everything you need, nothing you don't.
-        </p>
-        <div class="mt-8 flex flex-wrap gap-3">
-          <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg" class="px-5 py-3 rounded-md bg-accent text-ink font-semibold hover:opacity-90 transition">Download for macOS</a>
-          <a href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer" class="px-5 py-3 rounded-md border border-edge hover:border-accent hover:text-accent transition">View Source</a>
+  <main id="main-content">
+    <section id="top" class="hero shell" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">Native macOS terminal / open source</p>
+        <h1 id="hero-title">A fast terminal for <em>real work.</em></h1>
+        <p class="hero-lede">vterm is a Rust and GPUI terminal emulator for macOS, with GPU rendering, workspaces, tabs, themes, and git context in one focused window.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg">Download for macOS <span aria-hidden="true">↗</span></a>
+          <a class="text-link" href="#install">Install with curl <span aria-hidden="true">↓</span></a>
         </div>
-        <div class="mt-6 max-w-lg">
-          <div class="mb-2 flex items-center justify-between text-xs text-gray-500">
-            <span>Quick install</span>
-            <span>macOS</span>
-          </div>
-          <div class="flex items-center gap-3 rounded-md border border-edge bg-panel px-3 py-2">
-            <code id="hero-install-command" class="min-w-0 flex-1 break-all text-xs text-gray-300">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code>
-            <button type="button" data-copy-target="hero-install-command" class="shrink-0 rounded border border-edge px-2 py-1 text-xs text-accent hover:border-accent transition" aria-label="Copy install command">Copy</button>
+        <div class="install-snippet" aria-label="Quick install command">
+          <div class="snippet-label"><span>Quick install</span><span>macOS</span></div>
+          <div class="snippet-row">
+            <code id="hero-install-command">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code>
+            <button class="copy-button" type="button" data-copy-target="hero-install-command" aria-label="Copy install command">Copy</button>
           </div>
         </div>
-        <div class="mt-8 flex items-center gap-6 text-sm text-gray-500">
-          <span><strong class="text-white">256</strong> colors</span>
-          <span><strong class="text-white">27</strong> themes</span>
-          <span><strong class="text-white">∞</strong> tabs</span>
-        </div>
+        <ul class="hero-facts" aria-label="vterm highlights">
+          <li><strong>27</strong><span>themes</span></li>
+          <li><strong>GPU</strong><span>rendering</span></li>
+          <li><strong>∞</strong><span>tabs</span></li>
+        </ul>
       </div>
-      <div class="relative">
-        <div class="rounded-xl border border-edge bg-panel shadow-2xl overflow-hidden">
-          <div class="flex items-center gap-2 px-4 py-3 border-b border-edge">
-            <span class="w-3 h-3 rounded-full bg-red-500"></span>
-            <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
-            <span class="w-3 h-3 rounded-full bg-green-500"></span>
-            <span class="ml-3 text-xs text-gray-500">~/projects/vterm</span>
+
+      <div class="hero-terminal" aria-label="Animated vterm terminal preview">
+        <div class="terminal-window">
+          <div class="window-bar">
+            <div class="window-controls" aria-hidden="true"><i></i><i></i><i></i></div>
+            <span>workspace / vterm</span>
+            <span class="window-status">main</span>
           </div>
-          <pre class="p-4 text-sm leading-relaxed"><code id="terminal-demo"></code></pre>
+          <div class="terminal-tabs" aria-hidden="true"><span class="is-active">vterm</span><span>terminal</span><span>terminal</span><span>+</span></div>
+          <pre class="terminal-output"><code id="terminal-demo"></code><span class="terminal-caret" aria-hidden="true"></span></pre>
+        </div>
+        <div class="terminal-caption"><span>One window for the work around your code.</span><span>GPUI / Rust</span></div>
+      </div>
+    </section>
+
+    <section id="preview" class="media-section shell" aria-labelledby="preview-title">
+      <div class="section-intro section-intro-split">
+        <div>
+          <p class="eyebrow">See it in motion</p>
+          <h2 id="preview-title">A terminal that keeps its shape as your work gets bigger.</h2>
+        </div>
+        <p>Workspaces stay visible, tabs stay close, and the terminal stays readable when the project gets busy.</p>
+      </div>
+      <figure class="app-video">
+        <video autoplay muted loop playsinline controls preload="metadata" poster="./assets/og-image.png">
+          <source src="./assets/screen_recording.mp4" type="video/mp4" />
+          Your browser does not support the video tag.
+        </video>
+        <figcaption><span>Real vterm workspace</span><span>Play with sound off</span></figcaption>
+      </figure>
+    </section>
+
+    <section id="features" class="feature-section" aria-labelledby="features-title">
+      <div class="shell feature-layout">
+        <div class="section-intro feature-heading">
+          <p class="eyebrow">Built around your flow</p>
+          <h2 id="features-title">Less window management. More terminal.</h2>
+          <p>Small details add up when the terminal is where your day starts.</p>
+        </div>
+        <div class="feature-list">
+          <article class="feature-row">
+            <span class="feature-mark" aria-hidden="true">01</span>
+            <div><h3>GPU-rendered UI</h3><p>Native rendering through GPUI keeps the interface responsive while output moves.</p></div>
+            <span class="feature-meta">Rust / GPUI</span>
+          </article>
+          <article class="feature-row">
+            <span class="feature-mark" aria-hidden="true">02</span>
+            <div><h3>Workspaces and tabs</h3><p>Keep projects separate without losing the context you already opened.</p></div>
+            <span class="feature-meta">session-aware</span>
+          </article>
+          <article class="feature-row">
+            <span class="feature-mark" aria-hidden="true">03</span>
+            <div><h3>Git context in reach</h3><p>See the current branch in the title bar and switch branches without leaving the window.</p></div>
+            <span class="feature-meta">branch-aware</span>
+          </article>
+          <article class="feature-row">
+            <span class="feature-mark" aria-hidden="true">04</span>
+            <div><h3>State that comes back</h3><p>Your workspaces, tabs, themes, and terminal sessions persist across restarts and updates.</p></div>
+            <span class="feature-meta">resume-ready</span>
+          </article>
+          <article class="feature-row">
+            <span class="feature-mark" aria-hidden="true">05</span>
+            <div><h3>Truecolor, without fuss</h3><p>ANSI output, 256 colors, and truecolor are interpreted natively for a clear terminal surface.</p></div>
+            <span class="feature-meta">256 / truecolor</span>
+          </article>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Preview / example view -->
-  <section id="preview" class="max-w-6xl mx-auto px-6 pt-4 pb-8">
-    <div class="rounded-xl border border-edge bg-panel shadow-2xl overflow-hidden">
-      <video autoplay muted loop playsinline controls class="w-full block">
-        <source src="assets/screen_recording.mp4" type="video/mp4" />
-        <source src="assets/screen_recording.mov" type="video/quicktime" />
-        Your browser does not support the video tag.
-      </video>
-    </div>
-  </section>
-
-  <!-- Features -->
-  <section id="features" class="max-w-6xl mx-auto px-6 py-20">
-    <h2 class="text-3xl font-bold text-white text-center">Why vterm?</h2>
-    <div class="mt-12 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
-        <h3 class="text-lg font-semibold text-white">Blazing Fast</h3>
-        <p class="mt-2 text-sm text-gray-400">Powered by GPUI for native, GPU-accelerated rendering with minimal latency.</p>
-      </div>
-      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
-        <h3 class="text-lg font-semibold text-white">TrueColor Support</h3>
-        <p class="mt-2 text-sm text-gray-400">Full 256-color and truecolor support natively interpreted from ANSI escapes.</p>
-      </div>
-      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
-        <h3 class="text-lg font-semibold text-white">Workspaces & Tabs</h3>
-        <p class="mt-2 text-sm text-gray-400">Multiple isolated workspaces, sidebar navigation, and multi-tabbed terminals.</p>
-      </div>
-      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
-        <h3 class="text-lg font-semibold text-white">Git Integration</h3>
-        <p class="mt-2 text-sm text-gray-400">See your current branch in the title bar. Click to switch branches instantly.</p>
-      </div>
-      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
-        <h3 class="text-lg font-semibold text-white">Customizable Themes</h3>
-        <p class="mt-2 text-sm text-gray-400">27 built-in light, dark, high-contrast, and colorful themes with live previews.</p>
-      </div>
-      <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
-        <h3 class="text-lg font-semibold text-white">Persisted State</h3>
-        <p class="mt-2 text-sm text-gray-400">Your tabs, workspaces, theme selections, and terminal sessions persist across restarts.</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- Themes (interactive) -->
-  <section id="themes" class="border-y border-edge bg-panel/40">
-    <div class="max-w-6xl mx-auto px-6 py-20">
-      <h2 class="text-3xl font-bold text-white text-center">Pick your vibe</h2>
-      <p class="text-center text-gray-400 mt-3">27 built-in themes. Click one to preview its palette live.</p>
-      <div id="theme-grid" class="mt-10 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"></div>
-    </div>
-  </section>
-
-  <!-- What's new -->
-  <section id="updates" class="max-w-6xl mx-auto px-6 py-20">
-    <div class="max-w-3xl mx-auto">
-      <div class="flex items-center justify-between gap-4">
-        <h2 class="text-3xl font-bold text-white">What's new</h2>
-        <span id="release-version" class="px-3 py-1 rounded-full border border-accent text-xs text-accent">Loading</span>
-      </div>
-      <div id="release-notes" class="mt-8 rounded-xl border border-edge bg-panel p-6" aria-live="polite">
-        <h3 id="release-title" class="text-lg font-semibold text-white">Loading release notes...</h3>
-        <ul id="release-items" class="mt-4 space-y-3 text-sm text-gray-400 list-disc list-inside"></ul>
-      </div>
-      <details class="mt-4 rounded-xl border border-edge bg-panel overflow-hidden">
-        <summary class="px-6 py-4 cursor-pointer text-sm text-gray-300 hover:text-accent transition">Release history</summary>
-        <div id="release-history" class="px-6 pb-6 space-y-6"></div>
-      </details>
-      <p class="mt-4 text-sm text-gray-500">See the full history in <a class="text-accent hover:underline" href="https://github.com/boytur/vterm/blob/master/CHANGELOG.md" target="_blank" rel="noreferrer">CHANGELOG.md</a>.</p>
-    </div>
-  </section>
-
-  <!-- Install -->
-  <section id="install" class="max-w-6xl mx-auto px-6 py-20">
-    <h2 class="text-3xl font-bold text-white text-center">Install</h2>
-    <div class="mt-10 max-w-2xl mx-auto flex flex-col items-center gap-6">
-      <div class="relative w-full rounded-xl border border-edge bg-panel overflow-hidden">
-        <pre class="p-4 pr-20 text-sm overflow-x-auto"><code id="install-command">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code></pre>
-        <button type="button" data-copy-target="install-command" class="absolute right-3 top-3 rounded border border-edge px-2 py-1 text-xs text-accent hover:border-accent transition" aria-label="Copy install command">Copy</button>
-      </div>
-      <p class="text-gray-500 text-sm">Installs straight to /Applications · no Gatekeeper warning</p>
-
-      <details class="w-full rounded-xl border border-edge bg-panel overflow-hidden">
-        <summary class="px-4 py-3 cursor-pointer text-sm text-gray-300 hover:text-accent transition">Prefer a manual download?</summary>
-        <div class="p-4 border-t border-edge flex flex-col gap-3">
-          <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg"
-             class="w-full text-center px-6 py-3 rounded-xl bg-accent text-ink font-semibold hover:opacity-90 transition">
-            ⬇ Download vterm for macOS
-          </a>
-          <p class="text-sm text-gray-400 leading-relaxed">
-            vterm is free and open source, so it isn't signed with a paid Apple Developer ID and isn't
-            notarized. A browser-downloaded DMG gets quarantined, so macOS will say "vterm is damaged" on
-            first open. That's expected — just remove the quarantine flag once:
-          </p>
-          <pre class="text-sm overflow-x-auto"><code>xattr -cr /Applications/vterm.app</code></pre>
-          <p class="text-sm text-gray-400">Then open it normally. Alternatively, right-click the app → <strong>Open</strong>.</p>
+    <section id="themes" class="themes-section shell" aria-labelledby="themes-title">
+      <div class="section-intro section-intro-split">
+        <div>
+          <p class="eyebrow">Make it yours</p>
+          <h2 id="themes-title">A surface for every kind of focus.</h2>
         </div>
-      </details>
-
-      <details class="w-full rounded-xl border border-edge bg-panel overflow-hidden">
-        <summary class="px-4 py-3 cursor-pointer text-sm text-gray-300 hover:text-accent transition">Build from source instead</summary>
-        <pre class="p-4 text-sm overflow-x-auto border-t border-edge"><code>git clone https://github.com/boytur/vterm.git
-cd vterm
-cargo run --release</code></pre>
-      </details>
-    </div>
-    <p class="text-center text-gray-500 mt-6 text-sm">
-      Requires macOS. Linux/Windows support depends on GPUI.
-    </p>
-  </section>
-
-  <footer class="border-t border-edge">
-    <div class="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-500">
-      <span>© <span id="year"></span> vterm · MIT</span>
-      <div class="flex gap-6">
-        <a class="hover:text-accent transition" href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer">GitHub</a>
-        <a class="hover:text-accent transition" href="#top">Back to top</a>
+        <p>Preview the built-in palette set. Choose a quiet light theme, high contrast, or something with more color.</p>
       </div>
+      <div id="theme-grid" class="theme-grid" aria-label="vterm theme previews"></div>
+    </section>
+
+    <section id="updates" class="updates-section shell" aria-labelledby="updates-title">
+      <div class="section-intro section-intro-split">
+        <div>
+          <p class="eyebrow">Project notes</p>
+          <h2 id="updates-title">What changed lately.</h2>
+        </div>
+        <p>Release notes are read from the project changelog, so this page stays current after every release.</p>
+      </div>
+      <div class="release-header"><span id="release-version" class="release-badge">Loading</span><span class="release-source">from CHANGELOG.md</span></div>
+      <div id="release-notes" class="release-notes" aria-live="polite">
+        <h3 id="release-title">Loading release notes...</h3>
+        <ul id="release-items"></ul>
+      </div>
+      <details class="release-history">
+        <summary>Release history</summary>
+        <div id="release-history-list"></div>
+      </details>
+      <a class="text-link" href="https://github.com/boytur/vterm/blob/master/CHANGELOG.md" target="_blank" rel="noreferrer">Read the full changelog <span aria-hidden="true">↗</span></a>
+    </section>
+
+    <section id="install" class="install-section" aria-labelledby="install-title">
+      <div class="shell install-layout">
+        <div class="section-intro">
+          <p class="eyebrow">Start here</p>
+          <h2 id="install-title">Install in one line.</h2>
+          <p>Run the command on macOS. It downloads the latest DMG, installs vterm to Applications, and clears the browser quarantine flag.</p>
+        </div>
+        <div class="install-panel">
+          <div class="snippet-label"><span>Terminal</span><span>copy and run</span></div>
+          <div class="snippet-row">
+            <code id="install-command">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code>
+            <button class="copy-button" type="button" data-copy-target="install-command" aria-label="Copy install command">Copy</button>
+          </div>
+          <p class="install-note">Requires macOS. The project is free and open source, but the app is not notarized with a paid Apple Developer ID.</p>
+          <details class="manual-install">
+            <summary>Prefer a manual DMG?</summary>
+            <div>
+              <a class="text-link" href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg">Download the latest DMG <span aria-hidden="true">↗</span></a>
+              <p>Move <code>vterm.app</code> to Applications. If macOS reports that the app is damaged, run <code>xattr -cr /Applications/vterm.app</code> once.</p>
+            </div>
+          </details>
+          <details class="manual-install">
+            <summary>Build from source</summary>
+            <div><code class="block-code">git clone https://github.com/boytur/vterm.git<br />cd vterm<br />cargo run --release</code></div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq" class="faq-section shell" aria-labelledby="faq-title">
+      <div class="section-intro">
+        <p class="eyebrow">Clear answers</p>
+        <h2 id="faq-title">Frequently asked questions.</h2>
+      </div>
+      <div class="faq-list">
+        <details open><summary>What is vterm?</summary><p>vterm is a free, open-source terminal emulator for macOS. It is written in Rust and uses GPUI for native GPU-accelerated rendering.</p></details>
+        <details><summary>What does vterm support?</summary><p>vterm supports truecolor and 256-color output, workspaces, tabs, git branch context, 27 built-in themes, persistent terminal state, and in-app updates.</p></details>
+        <details><summary>How do I install vterm?</summary><p>Run the curl command above on macOS, or download the latest DMG from GitHub Releases and move the app to Applications.</p></details>
+        <details><summary>Is vterm free and open source?</summary><p>Yes. vterm is published under the MIT license and the source code is available on GitHub.</p></details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <div><a class="brand" href="#top"><img src="./assets/logo.jpg" alt="" width="28" height="28" /><span>vterm</span></a><p>Rust, GPUI, and a terminal that stays out of the way.</p></div>
+      <div class="footer-links"><a href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/boytur/vterm/blob/master/CHANGELOG.md" target="_blank" rel="noreferrer">Changelog</a><a href="#top">Back to top</a></div>
+      <span class="copyright">© <span id="year"></span> vterm · MIT</span>
     </div>
   </footer>
 
