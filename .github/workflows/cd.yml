@@ -44,6 +44,8 @@ jobs:
           DEST="$APP_DIR/Contents/MacOS"
           mkdir -p "$DEST"
           cp "$BIN_PATH" "$DEST/$APP_NAME"
+          mkdir -p "$APP_DIR/Contents/Resources"
+          cp assets/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
           cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -55,6 +57,8 @@ jobs:
             <string>vterm</string>
             <key>CFBundleExecutable</key>
             <string>vterm</string>
+            <key>CFBundleIconFile</key>
+            <string>AppIcon</string>
             <key>CFBundleIdentifier</key>
             <string>com.vterm.app</string>
             <key>CFBundleVersion</key>
