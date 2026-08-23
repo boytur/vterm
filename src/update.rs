@@ -162,23 +162,45 @@ fn find_in_volume(mount: &Path) -> Result<PathBuf, String> {
 #[cfg(target_os = "macos")]
 fn install_app(new_app: &Path, current_app: &Path) -> Result<(), String> {
     let dest_parent = current_app.parent().ok_or("bad app path")?;
-    let dest = dest_parent.join(
-        current_app
-            .file_name()
-            .ok_or("bad app name")?,
-    );
+    let name = current_app
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("bad app name")?;
+    let dest = dest_parent.join(name);
+    let old = dest_parent.join(format!("{name}.old"));
 
-    let out = std::process::Command::new("cp")
+    // Move the running bundle aside (rename doesn't disturb the live process),
+    // then copy the new one in. Overwriting the running executable directly
+    // fails with "text file busy", so the move-aside avoids that.
+    let _ = std::fs::remove_dir_all(&old);
+    let mv = std::process::Command::new("mv")
+        .args([&dest.to_string_lossy(), &old.to_string_lossy()])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !mv.status.success() {
+        return Err(String::from_utf8_lossy(&mv.stderr).trim().to_string());
+    }
+
+    let cp = std::process::Command::new("cp")
         .args(["-Rf", &new_app.to_string_lossy(), &dest_parent.to_string_lossy()])
         .output()
         .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    if !cp.status.success() {
+        // Restore the previous version so the app still launches.
+        let _ = std::process::Command::new("mv")
+            .args([&old.to_string_lossy(), &dest.to_string_lossy()])
+            .output();
+        return Err(String::from_utf8_lossy(&cp.stderr).trim().to_string());
     }
 
     // Clear any quarantine so Gatekeeper doesn't block the freshly copied app.
     let _ = std::process::Command::new("xattr")
         .args(["-dr", "com.apple.quarantine", &dest.to_string_lossy()])
+        .output();
+
+    // Best-effort cleanup of the moved-aside old bundle.
+    let _ = std::process::Command::new("rm")
+        .args(["-rf", &old.to_string_lossy()])
         .output();
 
     Ok(())
