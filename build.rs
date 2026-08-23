@@ -1,6 +1,8 @@
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=GITHUB_REF_NAME");
+
     let version = std::env::var("GITHUB_REF_NAME")
         .ok()
         .filter(|s| s.starts_with('v'))
