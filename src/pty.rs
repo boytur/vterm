@@ -125,59 +125,82 @@ unsafe fn spawn_shell(
 
 impl PtyTerminal {
     pub fn new_with_cwd(cwd: Option<String>, cx: &mut Context<Self>) -> Self {
-        let (master_fd, slave_fd) = unsafe { open_pty(24, 80).expect("failed to open pty") };
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string());
-        unsafe {
-            std::env::set_var("TERM", "xterm-256color");
-            std::env::set_var("COLORTERM", "truecolor");
-        }
-        let child_pid = unsafe {
-            spawn_shell(master_fd, slave_fd, &shell, cwd.as_deref()).expect("failed to spawn shell")
-        };
-        unsafe {
-            libc::close(slave_fd);
-        }
-
-        let master = MasterPty { fd: master_fd };
-        let reader = unsafe { std::fs::File::from_raw_fd(libc::dup(master_fd)) };
-        let writer = unsafe { std::fs::File::from_raw_fd(libc::dup(master_fd)) };
-
         let parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 0)));
         let parser_clone = parser.clone();
 
-        let (tx, rx) = std::sync::mpsc::channel();
+        let mut master_fd: RawFd = -1;
+        let mut child_pid: Option<u32> = None;
 
-        std::thread::spawn(move || {
-            let mut reader = reader;
-            let mut buf = [0u8; 8192];
-            while let Ok(n) = reader.read(&mut buf) {
-                if n == 0 {
-                    break;
+        match unsafe { open_pty(24, 80) } {
+            Ok((m, s)) => {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string());
+                unsafe {
+                    std::env::set_var("TERM", "xterm-256color");
+                    std::env::set_var("COLORTERM", "truecolor");
                 }
-                if tx.send(buf[..n].to_vec()).is_err() {
-                    break;
-                }
-            }
-        });
-
-        cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-            let mut cx = cx.clone();
-            async move {
-                while let Ok(bytes) = rx.recv() {
-                    parser_clone.lock().unwrap().process(&bytes);
-                    if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
-                        break;
+                match unsafe { spawn_shell(m, s, &shell, cwd.as_deref()) } {
+                    Ok(pid) => {
+                        unsafe {
+                            libc::close(s);
+                        }
+                        master_fd = m;
+                        child_pid = Some(pid as u32);
+                    }
+                    Err(e) => {
+                        eprintln!("vterm: failed to spawn shell: {e}");
+                        unsafe {
+                            libc::close(m);
+                            libc::close(s);
+                        }
                     }
                 }
             }
-        })
-        .detach();
+            Err(e) => eprintln!("vterm: failed to open pty: {e}"),
+        }
+
+        let master = MasterPty { fd: master_fd };
+        let writer: Box<dyn Write + Send> = if master_fd >= 0 {
+            Box::new(unsafe { std::fs::File::from_raw_fd(libc::dup(master_fd)) })
+        } else {
+            Box::new(std::io::sink())
+        };
+
+        if master_fd >= 0 {
+            let reader = unsafe { std::fs::File::from_raw_fd(libc::dup(master_fd)) };
+            let (tx, rx) = std::sync::mpsc::channel();
+
+            std::thread::spawn(move || {
+                let mut reader = reader;
+                let mut buf = [0u8; 8192];
+                while let Ok(n) = reader.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    while let Ok(bytes) = rx.recv() {
+                        parser_clone.lock().unwrap().process(&bytes);
+                        if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            })
+            .detach();
+        }
 
         Self {
             parser,
-            writer: Box::new(writer),
+            writer,
             master,
-            child_pid: Some(child_pid as u32),
+            child_pid,
         }
     }
 
