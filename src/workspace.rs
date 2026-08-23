@@ -1,0 +1,919 @@
+use crate::components::sidebar::render_sidebar;
+use crate::components::tab_bar::render_tab_bar;
+use crate::components::terminal::render_terminal_view;
+use crate::components::title_bar::render_title_bar;
+use crate::state::AppState;
+use gpui::prelude::*;
+use gpui::*;
+
+use crate::pty::PtyTerminal;
+use crate::ui::{button::button, modal::modal_overlay};
+
+pub struct Workspace {
+    pub state: AppState,
+    pub focus_handle: gpui::FocusHandle,
+    pub terminals: Vec<Vec<Entity<PtyTerminal>>>,
+    pub tab_context_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    pub dir_context_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    pub renaming_tab_modal: Option<(usize, String)>,
+    pub renaming_dir_modal: Option<(usize, String)>,
+    pub git_branch: String,
+    pub git_branches: Vec<String>,
+    pub theme_menu_open: bool,
+    pub branch_menu_open: bool,
+    pub alert_modal: Option<(String, String)>,
+}
+
+impl Workspace {
+    pub fn get_active_terminal_cwd(&self, cx: &mut Context<Self>) -> Option<String> {
+        let ws_idx = self.state.active_workspace;
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let term_idx = ws.active_term;
+        let term_entity = self.terminals.get(ws_idx)?.get(term_idx)?;
+        let pid = term_entity.read(cx).child_pid?;
+        
+        let output = std::process::Command::new("lsof")
+            .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
+            .output()
+            .ok()?;
+            
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if let Some(stripped) = line.strip_prefix('n') {
+                return Some(stripped.to_string());
+            }
+        }
+        None
+    }
+
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let state = AppState::new();
+        let mut terminals = Vec::new();
+        for ws in &state.workspaces {
+            let mut ws_terms = Vec::new();
+            for term_data in &ws.terminals {
+                let cwd = term_data.cwd.clone();
+                let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, cx));
+                cx.observe(&term, |_, _, cx| cx.notify()).detach();
+                ws_terms.push(term);
+            }
+            terminals.push(ws_terms);
+        }
+
+        let mut this = Self {
+            state,
+            focus_handle: cx.focus_handle(),
+            terminals,
+            tab_context_menu: None,
+            dir_context_menu: None,
+            renaming_tab_modal: None,
+            renaming_dir_modal: None,
+            git_branch: String::new(),
+            git_branches: Vec::new(),
+            theme_menu_open: false,
+            branch_menu_open: false,
+            alert_modal: None,
+        };
+        
+        this.poll_git_branch(cx);
+        this
+    }
+
+
+    fn poll_git_branch(&mut self, cx: &mut Context<Self>) {
+        let mut active_pid = None;
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+            let term_idx = ws.active_term;
+            if let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(term_idx)) {
+                active_pid = term_entity.read(cx).child_pid;
+            }
+        }
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(move |workspace: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+            let mut async_cx = cx.clone();
+            async move {
+                let (branch, _cwd) = executor.spawn(async move {
+                    let mut cwd = None;
+                    if let Some(pid) = active_pid {
+                        if let Ok(output) = std::process::Command::new("lsof")
+                            .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
+                            .output()
+                        {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            for line in stdout.lines() {
+                                if let Some(stripped) = line.strip_prefix('n') {
+                                    cwd = Some(stripped.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    let mut branch = String::new();
+                    if let Some(ref c) = cwd {
+                        if let Ok(output) = std::process::Command::new("git")
+                            .args(["branch", "--show-current"])
+                            .current_dir(c)
+                            .output()
+                        {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            branch = stdout.trim().to_string();
+                        }
+                    }
+                    (branch, cwd)
+                }).await;
+
+                workspace.update(&mut async_cx, |this, cx| {
+                    if this.git_branch != branch {
+                        this.git_branch = branch;
+                        cx.notify();
+                    }
+                }).ok();
+            }
+        }).detach();
+        
+        cx.spawn(|this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+            let mut async_cx = cx.clone();
+            async move {
+                async_cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                this.update(&mut async_cx, |this, cx| {
+                    this.poll_git_branch(cx);
+                }).ok();
+            }
+        }).detach();
+    }
+
+    pub fn toggle_theme_menu(&mut self, cx: &mut Context<Self>) {
+        self.theme_menu_open = !self.theme_menu_open;
+        cx.notify();
+    }
+
+    pub fn toggle_branch_menu(&mut self, cx: &mut Context<Self>) {
+        self.branch_menu_open = !self.branch_menu_open;
+        if self.branch_menu_open {
+            if let Some(cwd) = self.get_active_terminal_cwd(cx) {
+                if let Ok(output) = std::process::Command::new("git")
+                    .args(["branch", "--format=%(refname:short)"])
+                    .current_dir(cwd)
+                    .output()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+                }
+            }
+        }
+        cx.notify();
+    }
+    
+    pub fn checkout_branch(&mut self, branch: &str, cx: &mut Context<Self>) {
+        if let Some(cwd) = self.get_active_terminal_cwd(cx) {
+            if let Ok(output) = std::process::Command::new("git")
+                .args(["checkout", branch])
+                .current_dir(&cwd)
+                .output()
+            {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    self.alert_modal = Some((
+                        "Git Checkout Failed".to_string(),
+                        stderr.to_string(),
+                    ));
+                }
+            }
+                
+            if let Ok(output) = std::process::Command::new("git")
+                .args(["branch", "--show-current"])
+                .current_dir(&cwd)
+                .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                self.git_branch = stdout.trim().to_string();
+            }
+        }
+        self.branch_menu_open = false;
+        cx.notify();
+    }
+
+    pub fn set_theme(&mut self, theme_fn: fn() -> crate::theme::Theme, theme_name: String, cx: &mut Context<Self>) {
+        self.state.theme = theme_fn();
+        self.state.theme_name = Some(theme_name);
+        self.theme_menu_open = false;
+        self.state.save().ok();
+        cx.notify();
+    }
+
+    pub fn add_dir(&mut self, cx: &mut Context<Self>) {
+        let name = std::env::current_dir()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "Workspace".into());
+
+        let cwd = self.get_active_terminal_cwd(cx);
+        let new_ws = crate::state::WorkspaceData {
+            name: format!("{} {}", name, self.state.workspaces.len() + 1),
+            terminals: vec![crate::state::TerminalData { name, cwd: cwd.clone() }],
+            active_term: 0,
+        };
+        self.state.workspaces.push(new_ws);
+        self.state.active_workspace = self.state.workspaces.len() - 1;
+        
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, cx));
+        cx.observe(&term, |_, _, cx| cx.notify()).detach();
+        self.terminals.push(vec![term]);
+        self.state.save().ok();
+        cx.notify();
+    }
+
+    pub fn close_tab(&mut self, ws_idx: usize, tab_idx: usize, cx: &mut Context<Self>) {
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
+            if ws.terminals.len() > 1 {
+                ws.terminals.remove(tab_idx);
+                self.terminals[ws_idx].remove(tab_idx);
+                if ws.active_term >= ws.terminals.len() {
+                    ws.active_term = ws.terminals.len() - 1;
+                }
+            } else {
+                if self.state.workspaces.len() > 1 {
+                    self.state.workspaces.remove(ws_idx);
+                    self.terminals.remove(ws_idx);
+                    if self.state.active_workspace >= self.state.workspaces.len() {
+                        self.state.active_workspace = self.state.workspaces.len() - 1;
+                    }
+                } else {
+                    std::process::exit(0);
+                }
+            }
+        }
+        self.state.save().ok();
+        cx.notify();
+    }
+
+    pub fn handle_key_down(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+            let term_idx = ws.active_term;
+            if let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(term_idx)) {
+                let key = event.keystroke.key.as_str();
+                let modifiers = &event.keystroke.modifiers;
+                
+                let bytes = match key {
+                    "enter" => vec![b'\r'],
+                    "backspace" => vec![0x7f],
+                    "tab" => vec![b'\t'],
+                    "escape" => vec![0x1b],
+                    "up" => vec![0x1b, b'[', b'A'],
+                    "down" => vec![0x1b, b'[', b'B'],
+                    "right" => vec![0x1b, b'[', b'C'],
+                    "left" => vec![0x1b, b'[', b'D'],
+                    _ if key.chars().count() == 1 => {
+                        let c = key.chars().next().unwrap();
+                        let mut b = vec![0; c.len_utf8()];
+                        c.encode_utf8(&mut b);
+                        if modifiers.control && c.is_ascii_lowercase() {
+                            vec![(c as u8) - b'a' + 1]
+                        } else if modifiers.shift {
+                            let upper = c.to_ascii_uppercase();
+                            let mut b2 = vec![0; upper.len_utf8()];
+                            upper.encode_utf8(&mut b2);
+                            b2
+                        } else {
+                            b
+                        }
+                    }
+                    _ => vec![],
+                };
+                
+                if !bytes.is_empty() {
+                    term_entity.update(cx, |term, _| {
+                        term.write(&bytes);
+                    });
+                }
+            }
+        }
+
+        if self.alert_modal.is_some() {
+            let key = event.keystroke.key.as_str();
+            if key == "enter" || key == "escape" {
+                self.alert_modal = None;
+                cx.notify();
+            }
+            return;
+        }
+
+        if let Some((idx, mut current_name)) = self.renaming_tab_modal.clone() {
+            let key = event.keystroke.key.as_str();
+
+            if key == "enter" {
+                if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
+                    ws.terminals[idx].name = current_name;
+                    self.state.save().ok();
+                }
+                self.renaming_tab_modal = None;
+            } else if key == "escape" {
+                self.renaming_tab_modal = None;
+            } else if key == "backspace" {
+                current_name.pop();
+                self.renaming_tab_modal = Some((idx, current_name));
+            } else if key.chars().count() == 1 {
+                if event.keystroke.modifiers.shift {
+                    current_name.push_str(&key.to_ascii_uppercase());
+                } else {
+                    current_name.push_str(key);
+                }
+                self.renaming_tab_modal = Some((idx, current_name));
+            }
+            cx.notify();
+            return;
+        }
+
+        if let Some((idx, mut current_name)) = self.renaming_dir_modal.clone() {
+            let key = event.keystroke.key.as_str();
+
+            if key == "enter" {
+                if let Some(ws) = self.state.workspaces.get_mut(idx) {
+                    ws.name = current_name;
+                    self.state.save().ok();
+                }
+                self.renaming_dir_modal = None;
+            } else if key == "escape" {
+                self.renaming_dir_modal = None;
+            } else if key == "backspace" {
+                current_name.pop();
+                self.renaming_dir_modal = Some((idx, current_name));
+            } else if key.chars().count() == 1 {
+                if event.keystroke.modifiers.shift {
+                    current_name.push_str(&key.to_ascii_uppercase());
+                } else {
+                    current_name.push_str(key);
+                }
+                self.renaming_dir_modal = Some((idx, current_name));
+            }
+            cx.notify();
+            return;
+        }
+    }
+
+
+    pub fn move_dir(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from != to && from < self.state.workspaces.len() && to <= self.state.workspaces.len() {
+            let ws = self.state.workspaces.remove(from);
+            let term = self.terminals.remove(from);
+            let new_to = if from < to { to - 1 } else { to };
+            self.state.workspaces.insert(new_to, ws);
+            self.terminals.insert(new_to, term);
+            if self.state.active_workspace == from {
+                self.state.active_workspace = new_to;
+            }
+            self.state.save().ok();
+            cx.notify();
+        }
+    }
+
+    pub fn open_dir_menu(&mut self, idx: usize, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        self.dir_context_menu = Some((idx, pos));
+        cx.notify();
+    }
+
+    pub fn close_dir_menu(&mut self, cx: &mut Context<Self>) {
+        self.dir_context_menu = None;
+        cx.notify();
+    }
+
+    pub fn select_dir(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx < self.state.workspaces.len() {
+            self.state.active_workspace = idx;
+            self.state.save().ok();
+            cx.notify();
+        }
+    }
+
+    pub fn delete_dir(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if self.state.workspaces.len() > 1 {
+            self.state.workspaces.remove(idx);
+            self.terminals.remove(idx);
+            if self.state.active_workspace >= self.state.workspaces.len() {
+                self.state.active_workspace = self.state.workspaces.len() - 1;
+            }
+        } else {
+            std::process::exit(0);
+        }
+        self.state.save().ok();
+        cx.notify();
+    }
+
+    pub fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
+            if from != to && from < ws.terminals.len() && to <= ws.terminals.len() {
+                let term_data = ws.terminals.remove(from);
+                let term = self.terminals[ws_idx].remove(from);
+                let new_to = if from < to { to - 1 } else { to };
+                ws.terminals.insert(new_to, term_data);
+                self.terminals[ws_idx].insert(new_to, term);
+                if ws.active_term == from {
+                    ws.active_term = new_to;
+                }
+                self.state.save().ok();
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn open_tab_menu(&mut self, idx: usize, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        self.tab_context_menu = Some((idx, pos));
+        cx.notify();
+    }
+
+    pub fn close_tab_menu(&mut self, cx: &mut Context<Self>) {
+        self.tab_context_menu = None;
+        cx.notify();
+    }
+
+    pub fn select_term(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
+            if idx < ws.terminals.len() {
+                ws.active_term = idx;
+                self.state.save().ok();
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn delete_term(&mut self, idx: usize, cx: &mut Context<Self>) {
+        self.close_tab(self.state.active_workspace, idx, cx);
+    }
+
+    pub fn add_term(&mut self, cx: &mut Context<Self>) {
+        let ws_idx = self.state.active_workspace;
+        let cwd = self.get_active_terminal_cwd(cx);
+        let name = "Terminal".to_string();
+        
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), cx));
+        cx.observe(&term, |_, _, cx| cx.notify()).detach();
+        
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
+            ws.terminals.push(crate::state::TerminalData { name, cwd });
+            ws.active_term = ws.terminals.len() - 1;
+            self.terminals[ws_idx].push(term);
+            self.state.save().ok();
+            cx.notify();
+        }
+    }
+
+    pub fn start_renaming_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+            if let Some(term) = ws.terminals.get(idx) {
+                self.renaming_tab_modal = Some((idx, term.name.clone()));
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn start_renaming_dir(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if let Some(ws) = self.state.workspaces.get(idx) {
+            self.renaming_dir_modal = Some((idx, ws.name.clone()));
+            cx.notify();
+        }
+}
+    }
+impl Render for Workspace {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = &self.state.theme;
+
+        let mut root = div()
+            .id("workspace")
+            .track_focus(&self.focus_handle)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, cx| {
+                    let mut changed = false;
+                    if this.tab_context_menu.is_some() {
+                        this.tab_context_menu = None;
+                        changed = true;
+                    }
+                    if this.dir_context_menu.is_some() {
+                        this.dir_context_menu = None;
+                        changed = true;
+                    }
+                    if this.theme_menu_open {
+                        this.theme_menu_open = false;
+                        changed = true;
+                    }
+                    if this.branch_menu_open {
+                        this.branch_menu_open = false;
+                        changed = true;
+                    }
+                    if changed {
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, _event, _window, cx| {
+                    let mut changed = false;
+                    if this.tab_context_menu.is_some() {
+                        this.tab_context_menu = None;
+                        changed = true;
+                    }
+                    if this.dir_context_menu.is_some() {
+                        this.dir_context_menu = None;
+                        changed = true;
+                    }
+                    if this.theme_menu_open {
+                        this.theme_menu_open = false;
+                        changed = true;
+                    }
+                    if this.branch_menu_open {
+                        this.branch_menu_open = false;
+                        changed = true;
+                    }
+                    if changed {
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_key_down(cx.listener(Self::handle_key_down))
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(theme.bg_main)
+            .text_color(theme.text_primary)
+            .text_size(px(13.0))
+            .child(render_title_bar(self, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(render_sidebar(self, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(render_tab_bar(self, cx))
+                            .child(render_terminal_view(self, window, cx, window.viewport_size())),
+                    )
+            );
+
+        if let Some((idx, pos)) = self.tab_context_menu {
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(pos.x)
+                    .top(pos.y)
+                    .w(px(150.0))
+                    .bg(theme.bg_sidebar)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_md()
+                    .shadow_lg()
+                    .p_1()
+                    .flex()
+                    .flex_col()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_sm()
+                            .hover(|s| s.bg(rgb(0x3a3d3e)))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.start_renaming_tab(idx, cx);
+                                    this.close_tab_menu(cx);
+                                }),
+                            )
+                            .child("Rename Tab"),
+                    )
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_sm()
+                            .text_color(rgb(0xff5555))
+                            .hover(|s| s.bg(rgb(0x4a4d4e)))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.delete_term(idx, cx);
+                                    this.close_tab_menu(cx);
+                                }),
+                            )
+                            .child("Close Tab"),
+                    ),
+            );
+        }
+
+        if let Some((idx, text)) = self.renaming_tab_modal.clone() {
+            root = root.child(modal_overlay(
+                theme,
+                "Rename Tab",
+                "Enter a custom name for this tab.",
+                div()
+                    .w_full()
+                    .p_2()
+                    .bg(rgb(0x2c2c2e))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .child(format!("{}|", text)),
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_center()
+                    .gap_3()
+                    .child(button("Cancel", theme, false).w_full().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _e, _w, cx| {
+                            this.renaming_tab_modal = None;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(button("Rename", theme, true).w_full().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _e, _w, cx| {
+                            let ws_idx = this.state.active_workspace;
+                            if let Some(ws) = this.state.workspaces.get_mut(ws_idx) {
+                                ws.terminals[idx].name = text.clone();
+                                this.state.save().ok();
+                            }
+                            this.renaming_tab_modal = None;
+                            cx.notify();
+                        }),
+                    )),
+            ));
+        }
+
+        if let Some((idx, pos)) = self.dir_context_menu {
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(pos.x)
+                    .top(pos.y)
+                    .w(px(150.0))
+                    .bg(theme.bg_sidebar)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_md()
+                    .shadow_lg()
+                    .p_1()
+                    .flex()
+                    .flex_col()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_sm()
+                            .hover(|s| s.bg(theme.bg_tab_inactive))
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.start_renaming_dir(idx, cx);
+                                    this.close_dir_menu(cx);
+                                }),
+                            )
+                            .child("Rename Directory"),
+                    )
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_sm()
+                            .hover(|s| s.bg(theme.bg_tab_inactive))
+                            .cursor_pointer()
+                            .text_color(theme.ansi[1])
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.delete_dir(idx, cx);
+                                    this.close_dir_menu(cx);
+                                }),
+                            )
+                            .child("Delete Directory"),
+                    ),
+            );
+        }
+
+        if self.theme_menu_open {
+            let themes = [
+                ("ubuntu", crate::theme::Theme::ubuntu as fn() -> crate::theme::Theme),
+                ("zed_dark", crate::theme::Theme::zed_dark),
+                ("dracula", crate::theme::Theme::dracula),
+                ("nord", crate::theme::Theme::nord),
+                ("gruvbox_dark", crate::theme::Theme::gruvbox_dark),
+                ("one_dark", crate::theme::Theme::one_dark),
+                ("solarized_dark", crate::theme::Theme::solarized_dark),
+                ("catppuccin_mocha", crate::theme::Theme::catppuccin_mocha),
+                ("tokyo_night", crate::theme::Theme::tokyo_night),
+                ("monokai", crate::theme::Theme::monokai),
+                ("ayu_dark", crate::theme::Theme::ayu_dark),
+                ("github_dark", crate::theme::Theme::github_dark),
+            ];
+            
+            let mut list = div()
+                .id("theme-dropdown")
+                .absolute()
+                .top(px(28.0))
+                .right(px(16.0))
+                .w(px(160.0))
+                .max_h(px(300.0))
+                .overflow_y_scroll()
+                .bg(theme.bg_sidebar)
+                .border_1()
+                .border_color(theme.border)
+                .rounded_md()
+                .shadow_lg()
+                .p_1()
+                .flex()
+                .flex_col()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+                
+            for (name, func) in themes {
+                let n = name.to_string();
+                let is_active = self.state.theme_name.as_deref() == Some(name);
+                let display_name = name.split('_')
+                    .map(|w| {
+                        let mut chars = w.chars();
+                        if let Some(c) = chars.next() {
+                            c.to_uppercase().collect::<String>() + chars.as_str()
+                        } else {
+                            String::new()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                
+                list = list.child(
+                    div()
+                        .id(name)
+                        .p_2()
+                        .rounded_sm()
+                        .hover(|s| s.bg(theme.bg_tab_inactive))
+                        .cursor_pointer()
+                        .text_color(if is_active { theme.accent } else { theme.text_primary })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _e, _w, cx| {
+                                this.set_theme(func, n.clone(), cx);
+                            }),
+                        )
+                        .child(display_name)
+                );
+            }
+            root = root.child(list);
+        }
+
+        if let Some((idx, text)) = self.renaming_dir_modal.clone() {
+            root = root.child(modal_overlay(
+                theme,
+                "Rename Workspace",
+                "Enter a custom name for this workspace.",
+                div()
+                    .w_full()
+                    .p_2()
+                    .bg(rgb(0x2c2c2e))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .child(format!("{}|", text)),
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_center()
+                    .gap_3()
+                    .child(button("Cancel", theme, false).w_full().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _e, _w, cx| {
+                            this.renaming_dir_modal = None;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(button("Rename", theme, true).w_full().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _e, _w, cx| {
+                            if let Some(ws) = this.state.workspaces.get_mut(idx) {
+                                ws.name = text.clone();
+                                this.state.save().ok();
+                            }
+                            this.renaming_dir_modal = None;
+                            cx.notify();
+                        }),
+                    )),
+            ));
+        }
+
+        if let Some((title, msg)) = self.alert_modal.clone() {
+            root = root.child(modal_overlay(
+                theme,
+                title.clone(),
+                "",
+                div()
+                    .w_full()
+                    .p_2()
+                    .bg(theme.bg_sidebar)
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_color(theme.text_primary)
+                    .text_size(px(12.0))
+                    .child(msg),
+                div()
+                    .flex()
+                    .w_full()
+                    .justify_end()
+                    .child(button("OK", theme, true).w(px(80.0)).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _e, _w, cx| {
+                            this.alert_modal = None;
+                            cx.notify();
+                        }),
+                    )),
+            ));
+        }
+
+        if self.branch_menu_open && !self.git_branches.is_empty() {
+            let mut list = div()
+                .id("branch-dropdown")
+                .absolute()
+                .top(px(28.0))
+                .left(px(80.0)) // Roughly aligned with branch text
+                .w(px(200.0))
+                .max_h(px(300.0))
+                .overflow_y_scroll()
+                .bg(theme.bg_sidebar)
+                .border_1()
+                .border_color(theme.border)
+                .rounded_md()
+                .shadow_lg()
+                .p_1()
+                .flex()
+                .flex_col()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .p_2()
+                        .text_color(theme.text_muted)
+                        .text_size(px(11.0))
+                        .child("Local Branches")
+                );
+                
+            for branch in &self.git_branches {
+                let b = branch.clone();
+                let is_active = self.git_branch == *branch;
+                
+                list = list.child(
+                    div()
+                        .id(gpui::SharedString::from(branch.clone()))
+                        .p_2()
+                        .rounded_sm()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .hover(|s| s.bg(theme.bg_tab_inactive))
+                        .cursor_pointer()
+                        .text_color(if is_active { theme.accent } else { theme.text_primary })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _e, _w, cx| {
+                                this.checkout_branch(&b, cx);
+                            }),
+                        )
+                        .child(
+                            if is_active {
+                                div().w(px(12.0)).child("✓")
+                            } else {
+                                div().w(px(12.0))
+                            }
+                        )
+                        .child(branch.clone())
+                );
+            }
+            root = root.child(list);
+        }
+
+        root
+    }
+}
