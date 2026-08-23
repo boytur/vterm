@@ -1,0 +1,56 @@
+name: Changelog Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require an Unreleased entry
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_SHA" --depth=1
+
+          if ! git diff --name-only "$BASE_SHA...HEAD" | grep -Fxq 'CHANGELOG.md'; then
+            echo 'CHANGELOG.md must be updated in this pull request.' >&2
+            exit 1
+          fi
+
+          if ! grep -Eq '^## \[Unreleased\][[:space:]]*$' CHANGELOG.md; then
+            echo 'CHANGELOG.md must contain a ## [Unreleased] section.' >&2
+            exit 1
+          fi
+
+          extract_unreleased() {
+            awk '
+              /^## \[Unreleased\][[:space:]]*$/ { section = 1; next }
+              section && /^## / { exit }
+              section { print }
+            '
+          }
+
+          base_entry="$(git show "$BASE_SHA:CHANGELOG.md" 2>/dev/null | extract_unreleased || true)"
+          head_entry="$(extract_unreleased < CHANGELOG.md)"
+
+          if [[ "$base_entry" == "$head_entry" ]]; then
+            echo 'Add or update a bullet under ## [Unreleased].' >&2
+            exit 1
+          fi
+
+          if ! printf '%s\n' "$head_entry" | grep -Eq '^[[:space:]]*-[[:space:]]+'; then
+            echo 'The Unreleased section must contain at least one bullet.' >&2
+            exit 1
+          fi

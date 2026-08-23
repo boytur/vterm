@@ -9,8 +9,8 @@ All notable changes to vterm are documented here.
 - Detect updates in the background and show a persistent Settings badge.
 - Download updates in-app and relaunch while preserving terminal sessions, workspaces, and tabs.
 - Make installation safer with version-correct app metadata, rollback, and old-process handling.
+- Document the changelog workflow and validate release notes in pull requests.
 
 ## [0.2.3] - 2026-08-23
 
 - Publish the macOS release and curl-based installer.
-
