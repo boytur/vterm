@@ -8,8 +8,9 @@ A high-performance, GPU-accelerated terminal emulator written in Rust using the 
 - **TrueColor Support**: Full 256-color and truecolor support natively interpreted from ANSI escapes.
 - **Workspaces & Tabs**: Support for multiple isolated workspaces, sidebar navigation, and multi-tabbed terminals.
 - **Git Integration**: Instantly see your current git branch in the title bar. Click the branch to switch branches effortlessly (with Zed-style dropdown).
-- **Customizable Themes**: Comes with multiple built-in themes (Ubuntu, Zed Dark, Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, etc.).
-- **Persisted State**: Your tabs, workspaces, and theme selections are persisted across restarts.
+- **Customizable Themes**: Comes with 27 built-in light, dark, high-contrast, and colorful themes.
+- **Persisted State**: Your tabs, workspaces, theme selections, and terminal sessions are persisted across restarts.
+- **In-App Updates**: Detect, download, and relaunch updates without losing terminal sessions.
 
 ## Install (macOS)
 
@@ -55,6 +56,17 @@ xattr -cr /Applications/vterm.app
 - `src/theme.rs`: Defines color palettes for different themes.
 - `src/workspace.rs`: Core workspace logic, tab management, and git integrations.
 
+### Changelog
+
+Every pull request must update [`CHANGELOG.md`](CHANGELOG.md). Add a concise,
+user-facing bullet under `## [Unreleased]` describing what changed. Keep the
+entry unreleased until a version tag is created; do not add a version number or
+date manually during normal development.
+
+The Changelog Check workflow verifies that the PR changes the `Unreleased`
+section. When a `v*` tag is pushed, the release workflow uses those entries as
+GitHub Release notes and opens a PR that moves them under the tagged version.
+
 ## CI / CD
 
 - **CI** (`.github/workflows/ci.yml`): builds and runs `cargo test` on macOS for every push/PR to `master`.
@@ -62,10 +74,16 @@ xattr -cr /Applications/vterm.app
 - **CD — Landing Page** (`.github/workflows/deploy.yml`): deploys the `landing/` site to Cloudflare Pages whenever it changes.
 
 ### Release a new version
+
+First merge the pending feature PRs, then push a semantic-version tag:
+
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.4
+git push origin v0.2.4
 ```
+
+The tag starts the macOS build and release. A follow-up changelog PR is opened
+automatically so the versioned history is reviewed before it lands on `master`.
 
 ### Cloudflare Pages setup
 Add these repository secrets (Settings → Secrets → Actions):
@@ -88,4 +106,3 @@ A static marketing site is available in `landing/`:
 ## Best Practices & Architecture
 
 This project is structured around the `gpui` model architecture. State is stored centrally in the `Workspace` model and UI is derived via `Render`. File parsing (PTY) runs in background async executors communicating via MPSC channels.
-

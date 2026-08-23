@@ -1,0 +1,62 @@
+name: Prepare Release Changelog
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    name: Version the changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Move Unreleased entries under the tag
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG_NAME#v}"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          RELEASE_DATE="$(date -u +%Y-%m-%d)"
+
+          awk -v version="$VERSION" -v release_date="$RELEASE_DATE" '
+            BEGIN { section = 0; found = 0 }
+            /^## \[Unreleased\][[:space:]]*$/ {
+              print
+              print ""
+              print "## [" version "] - " release_date
+              print ""
+              section = 1
+              next
+            }
+            section && /^## / { section = 0 }
+            section && /^[[:space:]]*-[[:space:]]+/ { found = 1 }
+            { print }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+      - name: Open changelog pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: master
+          branch: chore/release-${{ github.ref_name }}
+          delete-branch: true
+          commit-message: "docs: prepare changelog for ${{ github.ref_name }}"
+          title: "docs: prepare changelog for ${{ github.ref_name }}"
+          body: |
+            This pull request was generated from the `${{ github.ref_name }}` tag.
+
+            It moves the reviewed `Unreleased` entries under the tagged version.
+            Merge it after checking the release notes.

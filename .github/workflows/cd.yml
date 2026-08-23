@@ -85,6 +85,16 @@ jobs:
           ln -s /Applications "$STAGING/Applications"
           hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" -ov -format UDZO "$APP_NAME-macos.dmg"
 
+      - name: Extract release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          awk '
+            /^## \[Unreleased\][[:space:]]*$/ { section = 1; next }
+            section && /^## / { exit }
+            section { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -97,3 +107,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: vterm-macos.dmg
+          body_path: release-notes.md
