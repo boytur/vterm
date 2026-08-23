@@ -16,7 +16,7 @@ pub struct PtyTerminal {
 
 impl PtyTerminal {
     pub fn new_with_cwd(cwd: Option<String>, cx: &mut Context<Self>) -> Self {
-        let parser = Arc::new(Mutex::new(Parser::new(24, 80, 0)));
+        let parser = Arc::new(Mutex::new(Parser::new(24, 80, 10000)));
         let parser_clone = parser.clone();
 
         let pty_system = native_pty_system();
@@ -124,6 +124,28 @@ impl PtyTerminal {
             .unwrap()
             .screen_mut()
             .set_size(rows, cols);
+    }
+
+    pub fn scroll(&mut self, delta_lines: f32) {
+        let mut parser = self.parser.lock().unwrap();
+        let current_offset = parser.screen().scrollback();
+        
+        let new_offset = if delta_lines < 0.0 {
+            current_offset.saturating_add((-delta_lines) as usize)
+        } else {
+            current_offset.saturating_sub(delta_lines as usize)
+        };
+        
+        parser.screen_mut().set_scrollback(new_offset);
+    }
+
+    pub fn scroll_info(&self) -> (usize, usize) {
+        let mut parser = self.parser.lock().unwrap();
+        let current = parser.screen().scrollback();
+        parser.screen_mut().set_scrollback(usize::MAX);
+        let max = parser.screen().scrollback();
+        parser.screen_mut().set_scrollback(current);
+        (current, max)
     }
 }
 

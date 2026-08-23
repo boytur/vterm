@@ -28,8 +28,11 @@ fn vt100_color_to_gpui(color: &vt100::Color, default_color: Hsla, _is_fg: bool, 
 
 pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &mut Context<Workspace>, viewport: gpui::Size<gpui::Pixels>) -> impl IntoElement {
     let theme = &workspace.state.theme;
+    let font_size = workspace.state.font_size;
 
     let mut lines_elements = Vec::new();
+    let mut selection_overlay = div();
+    let mut scrollbar_element = div();
 
     if let Some(ws) = workspace.state.workspaces.get(workspace.state.active_workspace) {
         if let Some(term_model) = workspace.terminals.get(workspace.state.active_workspace).and_then(|t| t.get(ws.active_term)) {
@@ -39,8 +42,10 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
             parser.screen().size()
         };
         
-        let expected_cols = ((f32::from(viewport.width) - 192.0 - 32.0) / 8.4).max(10.0) as u16;
-        let expected_rows = ((f32::from(viewport.height) - 64.0 - 48.0) / 20.0).max(10.0) as u16;
+        let cell_w = font_size * (8.4 / 14.0);
+        let cell_h = font_size * (20.0 / 14.0);
+        let expected_cols = ((f32::from(viewport.width) - 192.0 - 32.0) / cell_w).max(10.0) as u16;
+        let expected_rows = ((f32::from(viewport.height) - 64.0 - 32.0) / cell_h).max(10.0) as u16;
         
         if expected_cols != cols_count || expected_rows != rows_count {
             let term_model = term_model.clone();
@@ -56,6 +61,63 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
         let parser = term.parser.lock().unwrap();
         let screen = parser.screen();
         let cursor = screen.cursor_position();
+        drop(parser); // release lock so we can call scroll_info on term_model
+
+        let (current_offset, max_offset) = term_model.read(cx).scroll_info();
+        if max_offset > 0 {
+            let total_lines = max_offset as f32 + rows_count as f32;
+            let visible_ratio = rows_count as f32 / total_lines;
+            let thumb_h = visible_ratio.max(0.05);
+            let max_scroll = 1.0 - thumb_h;
+            let scroll_fraction = (max_offset - current_offset) as f32 / max_offset as f32;
+            let thumb_top = scroll_fraction * max_scroll;
+
+            scrollbar_element = div()
+                .absolute()
+                .top(px(16.0))
+                .bottom(px(16.0))
+                .right(px(4.0))
+                .w(px(6.0))
+                .child(
+                    div()
+                        .absolute()
+                        .w_full()
+                        .h(relative(thumb_h))
+                        .top(relative(thumb_top))
+                        .bg(gpui::rgba(0x88888844))
+                        .hover(|s| s.bg(gpui::rgba(0x88888888)))
+                        .rounded_full()
+                );
+        }
+
+        let parser = term.parser.lock().unwrap();
+        let screen = parser.screen();
+
+        if let Some(sel) = workspace.selection {
+            let (c1, r1) = sel.0;
+            let (c2, r2) = sel.1;
+            let min_c = c1.min(c2);
+            let max_c = c1.max(c2);
+            let min_r = r1.min(r2);
+            let max_r = r1.max(r2);
+            let mut rects: Vec<gpui::AnyElement> = Vec::new();
+            for r in min_r..=max_r {
+                let x = 16.0 + min_c as f32 * cell_w;
+                let y = 16.0 + r as f32 * cell_h;
+                let w = (max_c - min_c + 1) as f32 * cell_w;
+                rects.push(
+                    div()
+                        .absolute()
+                        .left(px(x))
+                        .top(px(y))
+                        .w(px(w))
+                        .h(px(cell_h))
+                        .bg(rgba(0x0a84ff55))
+                        .into_any_element(),
+                );
+            }
+            selection_overlay = div().absolute().inset_0().children(rects);
+        }
         
         for r in 0..rows_count {
             let mut line_children = Vec::new();
@@ -79,18 +141,58 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                         (fg_base, bg_base)
                     };
                     
-                    let mut el = div().whitespace_nowrap().text_color(final_fg).px(px(0.5));
-                    if bg != vt100::Color::Default || inv {
-                        el = el.bg(final_bg);
+                    let mut remaining = text.as_str();
+                    while !remaining.is_empty() {
+                        let http_idx = remaining.find("http://");
+                        let https_idx = remaining.find("https://");
+                        
+                        let idx = match (http_idx, https_idx) {
+                            (Some(i), Some(j)) => Some(i.min(j)),
+                            (Some(i), None) => Some(i),
+                            (None, Some(j)) => Some(j),
+                            (None, None) => None,
+                        };
+
+                        let create_el = || {
+                            let mut base = div().whitespace_nowrap().text_color(final_fg).px(px(0.5));
+                            if bg != vt100::Color::Default || inv {
+                                base = base.bg(final_bg);
+                            }
+                            if bold && !inv {
+                                base = base.text_color(vt100_color_to_gpui(&fg, gpui::white(), true, theme));
+                            }
+                            if bold {
+                                base = base.font_weight(gpui::FontWeight::BOLD);
+                            }
+                            base
+                        };
+
+                        if let Some(i) = idx {
+                            if i > 0 {
+                                line_children.push(create_el().child(remaining[..i].to_string()));
+                            }
+                            let url_start = &remaining[i..];
+                            let end_idx = url_start.find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ']' || c == '>')
+                                .unwrap_or(url_start.len());
+                            let url = &url_start[..end_idx];
+                            let url_string = url.to_string();
+                            
+                            line_children.push(
+                                create_el()
+                                    .text_color(gpui::rgba(0x4488FFFF))
+                                    .hover(|s| s.bg(gpui::rgba(0x4488FF33)))
+                                    .cursor_pointer()
+                                    .on_mouse_down(gpui::MouseButton::Left, move |_e, _w, cx| {
+                                        cx.open_url(&url_string);
+                                    })
+                                    .child(url.to_string())
+                            );
+                            remaining = &url_start[end_idx..];
+                        } else {
+                            line_children.push(create_el().child(remaining.to_string()));
+                            break;
+                        }
                     }
-                    if bold && !inv {
-                        el = el.text_color(vt100_color_to_gpui(&fg, gpui::white(), true, theme));
-                    }
-                    if bold {
-                        el = el.font_weight(gpui::FontWeight::BOLD);
-                    }
-                    
-                    line_children.push(el.child(text.clone()));
                     text.clear();
                 }
             };
@@ -138,7 +240,7 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                     .flex_row()
                     .items_start()
                     .pt(px(3.0))
-                    .h(px(20.0))
+                    .h(px(cell_h))
                     .children(line_children)
             );
         }
@@ -146,15 +248,24 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
     }
 
     div()
+        .relative()
         .w_full()
         .h_full()
         .bg(theme.bg_main)
         .px_4()
         .pt_4()
-        .pb_8()
+        .pb_4()
         .font_family("Menlo")
-        .text_size(px(14.0))
-        .line_height(relative(1.0))
+        .text_size(px(font_size))
+        .line_height(relative(20.0 / 14.0))
         .overflow_hidden()
+        .on_mouse_down(gpui::MouseButton::Left, cx.listener(Workspace::on_terminal_mouse_down))
+        .on_mouse_down(gpui::MouseButton::Right, cx.listener(Workspace::on_terminal_mouse_down))
+        .on_mouse_move(cx.listener(Workspace::on_terminal_mouse_move))
+        .on_mouse_up(gpui::MouseButton::Left, cx.listener(Workspace::on_terminal_mouse_up))
+        .on_mouse_up(gpui::MouseButton::Right, cx.listener(Workspace::on_terminal_mouse_up))
+        .on_scroll_wheel(cx.listener(Workspace::on_terminal_scroll_wheel))
+        .child(selection_overlay)
         .children(lines_elements)
+        .child(scrollbar_element)
 }

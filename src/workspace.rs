@@ -22,6 +22,9 @@ pub struct Workspace {
     pub theme_menu_open: bool,
     pub branch_menu_open: bool,
     pub alert_modal: Option<(String, String)>,
+    pub selection: Option<((u16, u16), (u16, u16))>,
+    pub selecting: bool,
+    pub toast: Option<String>,
 }
 
 impl Workspace {
@@ -73,6 +76,9 @@ impl Workspace {
             theme_menu_open: false,
             branch_menu_open: false,
             alert_modal: None,
+            selection: None,
+            selecting: false,
+            toast: None,
         };
         
         this.poll_git_branch(cx);
@@ -250,6 +256,183 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn adjust_font_size(&mut self, delta: f32, cx: &mut Context<Self>) {
+        let new_size = (self.state.font_size + delta).clamp(8.0, 40.0);
+        if (new_size - self.state.font_size).abs() > f32::EPSILON {
+            self.state.font_size = new_size;
+            self.state.save().ok();
+            cx.notify();
+        }
+    }
+
+    fn active_screen_size(&self, cx: &App) -> (u16, u16) {
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+            if let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
+                let term = term.read(cx);
+                let parser = term.parser.lock().unwrap();
+                return parser.screen().size();
+            }
+        }
+        (24, 80)
+    }
+
+    pub     fn cell_at(&self, pos: gpui::Point<gpui::Pixels>, cx: &App) -> (u16, u16) {
+        let font_size = self.state.font_size;
+        let cell_w = font_size * (8.4 / 14.0);
+        let cell_h = font_size * (20.0 / 14.0);
+        let (rows, cols) = self.active_screen_size(cx);
+        let origin_x = 192.0 + 16.0;
+        let origin_y = 64.0 + 16.0;
+        let col = (((f32::from(pos.x) - origin_x) / cell_w).floor()).clamp(0.0, (cols as f32) - 1.0) as u16;
+        let row = (((f32::from(pos.y) - origin_y) / cell_h).floor()).clamp(0.0, (rows as f32) - 1.0) as u16;
+        (col, row)
+    }
+
+    pub fn selected_text(&self, cx: &App) -> Option<String> {
+        let (start, end) = self.selection?;
+        let (c1, r1) = start;
+        let (c2, r2) = end;
+        let min_c = c1.min(c2);
+        let max_c = c1.max(c2);
+        let min_r = r1.min(r2);
+        let max_r = r1.max(r2);
+        let ws_idx = self.state.active_workspace;
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let term = self.terminals.get(ws_idx)?.get(ws.active_term)?;
+        let term = term.read(cx);
+        let parser = term.parser.lock().unwrap();
+        let screen = parser.screen();
+        let mut lines = Vec::new();
+        for r in min_r..=max_r {
+            let mut line = String::new();
+            for c in min_c..=max_c {
+                if let Some(cell) = screen.cell(r, c) {
+                    line.push_str(cell.contents());
+                } else {
+                    line.push(' ');
+                }
+            }
+            lines.push(line);
+        }
+        Some(lines.join("\n"))
+    }
+
+    pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some(text) = self.selected_text(cx) {
+            if !text.trim().is_empty() {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                self.toast = Some("Copied!".to_string());
+                cx.spawn(|this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                    let mut async_cx = cx.clone();
+                    async move {
+                        async_cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                        this.update(&mut async_cx, |this, cx| {
+                            this.toast = None;
+                            cx.notify();
+                        }).ok();
+                    }
+                }).detach();
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn write_active(&mut self, bytes: &[u8], cx: &mut App) {
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+            if let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
+                term.update(cx, |term, _| term.write(bytes));
+            }
+        }
+    }
+
+    pub fn paste_clipboard(&mut self, cx: &mut App) {
+        if let Some(item) = cx.read_from_clipboard() {
+            if let Some(text) = item.text() {
+                self.write_active(text.as_bytes(), cx);
+            }
+        }
+    }
+
+    pub fn on_terminal_mouse_down(
+        &mut self,
+        event: &gpui::MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button == gpui::MouseButton::Right {
+            self.paste_clipboard(cx);
+            return;
+        }
+        if event.button == gpui::MouseButton::Left {
+            let cell = self.cell_at(event.position, cx);
+            self.selecting = true;
+            self.selection = Some((cell, cell));
+            cx.notify();
+        }
+    }
+
+    pub fn on_terminal_mouse_move(
+        &mut self,
+        event: &gpui::MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selecting {
+            if let Some((start, _)) = self.selection {
+                let cell = self.cell_at(event.position, cx);
+                self.selection = Some((start, cell));
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn on_terminal_mouse_up(
+        &mut self,
+        _event: &gpui::MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selecting = false;
+        if let Some((start, end)) = self.selection {
+            if start == end {
+                self.selection = None;
+            } else {
+                self.copy_selection(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn on_terminal_scroll_wheel(
+        &mut self,
+        event: &gpui::ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.modifiers.platform {
+            let delta = f32::from(event.delta.pixel_delta(px(16.0)).y);
+            self.adjust_font_size(delta * 0.1, cx);
+            return;
+        }
+
+        let ws_idx = self.state.active_workspace;
+        let font_size = self.state.font_size;
+        let cell_h = font_size * (20.0 / 14.0);
+        let delta_pixels = event.delta.pixel_delta(px(font_size)).y;
+        let delta_lines = f32::from(delta_pixels) / cell_h;
+
+        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+            if let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(ws.active_term)) {
+                term_entity.update(cx, |term, _| {
+                    term.scroll(delta_lines);
+                });
+                cx.notify();
+            }
+        }
+    }
+
     pub fn handle_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -257,6 +440,59 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let ws_idx = self.state.active_workspace;
+
+        if event.keystroke.modifiers.platform {
+            match event.keystroke.key.as_str() {
+                "=" | "+" => {
+                    self.adjust_font_size(1.0, cx);
+                    return;
+                }
+                "-" => {
+                    self.adjust_font_size(-1.0, cx);
+                    return;
+                }
+                "0" => {
+                    self.state.font_size = crate::state::DEFAULT_FONT_SIZE;
+                    self.state.save().ok();
+                    cx.notify();
+                    return;
+                }
+                "c" => {
+                    self.copy_selection(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "v" => {
+                    self.paste_clipboard(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "k" => {
+                    self.write_active(b"\x0C", cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "t" => {
+                    self.add_term(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "n" => {
+                    self.add_dir(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "w" => {
+                    if let Some(ws) = self.state.workspaces.get(ws_idx) {
+                        self.delete_term(ws.active_term, cx);
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         if let Some(ws) = self.state.workspaces.get(ws_idx) {
             let term_idx = ws.active_term;
             if let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(term_idx)) {
@@ -295,6 +531,10 @@ impl Workspace {
                     term_entity.update(cx, |term, _| {
                         term.write(&bytes);
                     });
+                    // Prevent GPUI's tab focus-traversal (and other default
+                    // key handling) from swallowing keys like Tab/arrows so
+                    // they reach the shell.
+                    cx.stop_propagation();
                 }
             }
         }
@@ -919,6 +1159,24 @@ impl Render for Workspace {
                 );
             }
             root = root.child(list);
+        }
+
+        if let Some(msg) = &self.toast {
+            root = root.child(
+                div()
+                    .absolute()
+                    .top(px(48.0))
+                    .right(px(16.0))
+                    .bg(theme.bg_sidebar)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_md()
+                    .shadow_lg()
+                    .px_4()
+                    .py_2()
+                    .text_color(theme.text_primary)
+                    .child(msg.clone())
+            );
         }
 
         root
