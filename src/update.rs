@@ -125,7 +125,10 @@ fn download_to_temp(url: &str) -> Result<PathBuf, String> {
 #[cfg(target_os = "macos")]
 fn attach_dmg(dmg: &Path) -> Result<PathBuf, String> {
     let out = std::process::Command::new("hdiutil")
-        .args(["attach", "-nobrowse", "-noautoopen", &dmg.to_string_lossy()])
+        .arg("attach")
+        .arg("-nobrowse")
+        .arg("-noautoopen")
+        .arg(dmg.as_os_str())
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
@@ -144,7 +147,9 @@ fn attach_dmg(dmg: &Path) -> Result<PathBuf, String> {
 #[cfg(target_os = "macos")]
 fn detach_dmg(mount: &Path) {
     let _ = std::process::Command::new("hdiutil")
-        .args(["detach", &mount.to_string_lossy(), "-force"])
+        .arg("detach")
+        .arg(mount.as_os_str())
+        .arg("-force")
         .output();
 }
 
@@ -174,7 +179,7 @@ fn install_app(new_app: &Path, current_app: &Path) -> Result<(), String> {
     // fails with "text file busy", so the move-aside avoids that.
     let _ = std::fs::remove_dir_all(&old);
     let mv = std::process::Command::new("mv")
-        .args([&dest.to_string_lossy(), &old.to_string_lossy()])
+        .args([dest.as_os_str(), old.as_os_str()])
         .output()
         .map_err(|e| e.to_string())?;
     if !mv.status.success() {
@@ -182,25 +187,30 @@ fn install_app(new_app: &Path, current_app: &Path) -> Result<(), String> {
     }
 
     let cp = std::process::Command::new("cp")
-        .args(["-Rf", &new_app.to_string_lossy(), &dest_parent.to_string_lossy()])
+        .arg("-Rf")
+        .arg(new_app.as_os_str())
+        .arg(dest_parent.as_os_str())
         .output()
         .map_err(|e| e.to_string())?;
     if !cp.status.success() {
         // Restore the previous version so the app still launches.
         let _ = std::process::Command::new("mv")
-            .args([&old.to_string_lossy(), &dest.to_string_lossy()])
+            .args([old.as_os_str(), dest.as_os_str()])
             .output();
         return Err(String::from_utf8_lossy(&cp.stderr).trim().to_string());
     }
 
     // Clear any quarantine so Gatekeeper doesn't block the freshly copied app.
     let _ = std::process::Command::new("xattr")
-        .args(["-dr", "com.apple.quarantine", &dest.to_string_lossy()])
+        .arg("-dr")
+        .arg("com.apple.quarantine")
+        .arg(dest.as_os_str())
         .output();
 
     // Best-effort cleanup of the moved-aside old bundle.
     let _ = std::process::Command::new("rm")
-        .args(["-rf", &old.to_string_lossy()])
+        .arg("-rf")
+        .arg(old.as_os_str())
         .output();
 
     Ok(())
