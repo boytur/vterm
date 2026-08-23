@@ -272,6 +272,7 @@ impl Workspace {
                     "down" => vec![0x1b, b'[', b'B'],
                     "right" => vec![0x1b, b'[', b'C'],
                     "left" => vec![0x1b, b'[', b'D'],
+                    "space" => vec![b' '],
                     _ if key.chars().count() == 1 => {
                         let c = key.chars().next().unwrap();
                         let mut b = vec![0; c.len_utf8()];
@@ -321,6 +322,9 @@ impl Workspace {
             } else if key == "backspace" {
                 current_name.pop();
                 self.renaming_tab_modal = Some((idx, current_name));
+            } else if key == "space" {
+                current_name.push(' ');
+                self.renaming_tab_modal = Some((idx, current_name));
             } else if key.chars().count() == 1 {
                 if event.keystroke.modifiers.shift {
                     current_name.push_str(&key.to_ascii_uppercase());
@@ -346,6 +350,9 @@ impl Workspace {
                 self.renaming_dir_modal = None;
             } else if key == "backspace" {
                 current_name.pop();
+                self.renaming_dir_modal = Some((idx, current_name));
+            } else if key == "space" {
+                current_name.push(' ');
                 self.renaming_dir_modal = Some((idx, current_name));
             } else if key.chars().count() == 1 {
                 if event.keystroke.modifiers.shift {
