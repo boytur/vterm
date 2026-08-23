@@ -66,11 +66,15 @@ date manually during normal development.
 The Changelog Check workflow verifies that the PR changes the `Unreleased`
 section. When a `v*` tag is pushed, the release workflow uses those entries as
 GitHub Release notes and opens a PR that moves them under the tagged version.
+For that final PR to be created automatically, enable **Allow GitHub Actions to
+create and approve pull requests** in Settings → Actions → General → Workflow
+permissions. The release itself can still publish if this repository setting is
+off, but the changelog PR step will fail after pushing its branch.
 
 ## CI / CD
 
 - **CI** (`.github/workflows/ci.yml`): builds and runs `cargo test` on macOS for every push/PR to `master`.
-- **CD — Release** (`.github/workflows/cd.yml`): on a `v*` tag (or manual dispatch) it builds the optimized macOS binary, packages it as a `.app` in a zip, and attaches it to a GitHub Release.
+- **CD — Release** (`.github/workflows/cd.yml`): on a `v*` tag (or manual dispatch) it builds the optimized macOS binary, packages it as a `.app` in a DMG, and attaches it to a GitHub Release.
 - **CD — Landing Page** (`.github/workflows/deploy.yml`): deploys the `landing/` site to Cloudflare Pages whenever it changes.
 
 ### Release a new version
@@ -78,8 +82,8 @@ GitHub Release notes and opens a PR that moves them under the tagged version.
 First merge the pending feature PRs, then push a semantic-version tag:
 
 ```bash
-git tag v0.2.4
-git push origin v0.2.4
+git tag v0.2.5
+git push origin v0.2.5
 ```
 
 The tag starts the macOS build and release. A follow-up changelog PR is opened
