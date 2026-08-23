@@ -21,6 +21,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          [[ -n "$cargo_version" && "$tag_version" == "$cargo_version" ]] || {
+            echo "Tag v${tag_version} does not match Cargo.toml version ${cargo_version}." >&2
+            exit 1
+          }
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

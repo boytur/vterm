@@ -1,9 +1,9 @@
 name: Prepare Release Changelog
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows: ["CD - Build Prod (macOS)"]
+    types: [completed]
 
 permissions:
   contents: write
@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   prepare:
+    if: github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')
     name: Version the changelog
     runs-on: ubuntu-latest
     steps:
@@ -22,7 +23,7 @@ jobs:
 
       - name: Move Unreleased entries under the tag
         env:
-          TAG_NAME: ${{ github.ref_name }}
+          TAG_NAME: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
           VERSION="${TAG_NAME#v}"
@@ -51,12 +52,12 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           base: master
-          branch: chore/release-${{ github.ref_name }}
+          branch: chore/release-${{ github.event.workflow_run.head_branch }}
           delete-branch: true
-          commit-message: "docs: prepare changelog for ${{ github.ref_name }}"
-          title: "docs: prepare changelog for ${{ github.ref_name }}"
+          commit-message: "docs: prepare changelog for ${{ github.event.workflow_run.head_branch }}"
+          title: "docs: prepare changelog for ${{ github.event.workflow_run.head_branch }}"
           body: |
-            This pull request was generated from the `${{ github.ref_name }}` tag.
+            This pull request was generated after the `${{ github.event.workflow_run.head_branch }}` release completed.
 
             It moves the reviewed `Unreleased` entries under the tagged version.
             Merge it after checking the release notes.
