@@ -30,9 +30,11 @@
   <header class="sticky top-0 z-50 backdrop-blur bg-ink/80 border-b border-edge">
     <nav class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
       <a href="#top" class="flex items-center gap-2 font-bold text-lg text-white">
-        <span class="inline-block w-3 h-3 rounded-sm bg-accent"></span> vterm
+        <img src="assets/logo.jpg" alt="vterm" class="w-7 h-7 rounded" />
+        <span>vterm</span>
       </a>
       <div class="hidden md:flex items-center gap-8 text-sm">
+        <a class="hover:text-accent transition" href="#preview">Preview</a>
         <a class="hover:text-accent transition" href="#features">Features</a>
         <a class="hover:text-accent transition" href="#themes">Themes</a>
         <a class="hover:text-accent transition" href="#install">Install</a>
@@ -75,6 +77,19 @@
           <pre class="p-4 text-sm leading-relaxed"><code id="terminal-demo"></code></pre>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- Preview / example view -->
+  <section id="preview" class="max-w-6xl mx-auto px-6 pt-4 pb-8">
+    <div class="rounded-xl border border-edge bg-panel shadow-2xl overflow-hidden">
+      <div class="flex items-center gap-2 px-4 py-3 border-b border-edge">
+        <span class="w-3 h-3 rounded-full bg-red-500"></span>
+        <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+        <span class="w-3 h-3 rounded-full bg-green-500"></span>
+        <span class="ml-3 text-xs text-gray-500">vterm — example view</span>
+      </div>
+      <img src="assets/screenshot.png" alt="vterm running a terminal" class="w-full block" />
     </div>
   </section>
 
