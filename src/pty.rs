@@ -41,14 +41,14 @@ impl PtyTerminal {
         let parser_clone = parser.clone();
 
         let (tx, rx) = std::sync::mpsc::channel();
-        
+
         std::thread::spawn(move || {
-            let mut buf = [0u8; 1024];
+            let mut buf = [0u8; 8192];
             while let Ok(n) = reader.read(&mut buf) {
-                if n == 0 { break; }
-                let mut v = Vec::with_capacity(n);
-                v.extend_from_slice(&buf[..n]);
-                if tx.send(v).is_err() {
+                if n == 0 {
+                    break;
+                }
+                if tx.send(buf[..n].to_vec()).is_err() {
                     break;
                 }
             }
@@ -57,23 +57,15 @@ impl PtyTerminal {
         cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let mut cx = cx.clone();
             async move {
-                loop {
-                    let mut received = false;
-                    while let Ok(bytes) = rx.try_recv() {
-                        parser_clone.lock().unwrap().process(&bytes);
-                        received = true;
+                while let Ok(bytes) = rx.recv() {
+                    parser_clone.lock().unwrap().process(&bytes);
+                    if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
+                        break;
                     }
-                    
-                    if received {
-                        if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
-                            break;
-                        }
-                    }
-                    
-                    cx.background_executor().timer(std::time::Duration::from_millis(16)).await;
                 }
             }
-        }).detach();
+        })
+        .detach();
 
         Self {
             parser,
