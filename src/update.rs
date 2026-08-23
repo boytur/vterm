@@ -41,7 +41,8 @@ pub fn check_for_update() -> Option<UpdateInfo> {
     let download_url = release
         .assets
         .iter()
-        .find(|a| a.name.ends_with(".zip"))
+        .find(|a| a.name.ends_with(".dmg"))
+        .or_else(|| release.assets.iter().find(|a| a.name.ends_with(".zip")))
         .map(|a| a.browser_download_url.clone())
         .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", REPO));
 

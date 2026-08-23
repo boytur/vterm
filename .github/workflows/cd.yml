@@ -36,14 +36,15 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
-      - name: Package .app bundle
+      - name: Package .dmg
         run: |
           APP_NAME=vterm
           BIN_PATH="target/release/$APP_NAME"
-          DEST="$APP_NAME.app/Contents/MacOS"
+          APP_DIR="$APP_NAME.app"
+          DEST="$APP_DIR/Contents/MacOS"
           mkdir -p "$DEST"
           cp "$BIN_PATH" "$DEST/$APP_NAME"
-          cat > "$APP_NAME.app/Contents/Info.plist" <<'PLIST'
+          cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -67,17 +68,23 @@ jobs:
           </dict>
           </plist>
           PLIST
-          ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$APP_NAME-macos.zip"
+          # Build a distributable DMG with a drag-to-Applications shortcut
+          STAGING="dmg_staging"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING"
+          cp -R "$APP_DIR" "$STAGING/$APP_NAME.app"
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" -ov -format UDZO "$APP_NAME-macos.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: vterm-macos
-          path: vterm-macos.zip
+          path: vterm-macos.dmg
           if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: vterm-macos.zip
+          files: vterm-macos.dmg
