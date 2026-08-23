@@ -4,6 +4,9 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-23
+
+
 - Add 27 built-in themes, including light, high-contrast, and VS Code-inspired palettes.
 - Add a settings dialog with Appearance, Terminal, and About sections.
 - Detect updates in the background and show a persistent Settings badge.
