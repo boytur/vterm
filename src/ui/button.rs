@@ -12,13 +12,13 @@ pub fn button(label: impl IntoElement, theme: &Theme, is_primary: bool) -> Div {
 
     if is_primary {
         btn = btn
-            .bg(rgb(0x0a84ff))
-            .hover(|s| s.bg(rgb(0x007aff)))
+            .bg(theme.accent)
+            .hover(|s| s.bg(theme.accent))
             .text_color(rgb(0xffffff));
     } else {
         btn = btn
-            .bg(rgb(0x3a3a3c))
-            .hover(|s| s.bg(rgb(0x4a4a4c)))
+            .bg(theme.bg_tab_inactive)
+            .hover(|s| s.bg(theme.border))
             .text_color(theme.text_primary);
     }
 
@@ -38,9 +38,9 @@ pub fn icon_button(icon: impl IntoElement, theme: &Theme, is_danger: bool) -> Di
         .text_color(theme.text_muted);
 
     if is_danger {
-        btn = btn.hover(|s| s.bg(rgb(0x4a4d4e)).text_color(rgb(0xff5555)));
+        btn = btn.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.ansi[1]));
     } else {
-        btn = btn.hover(|s| s.bg(rgb(0x4a4d4e)).text_color(theme.text_primary));
+        btn = btn.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary));
     }
 
     btn.child(icon)

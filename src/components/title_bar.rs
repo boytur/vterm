@@ -26,8 +26,16 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
             .py_1()
             .rounded_md()
             .cursor_pointer()
-            .text_color(if workspace.branch_menu_open { theme.text_primary } else { theme.text_muted })
-            .bg(if workspace.branch_menu_open { theme.bg_tab_inactive } else { gpui::rgba(0x00000000) })
+            .text_color(if workspace.branch_menu_open {
+                theme.text_primary
+            } else {
+                theme.text_muted
+            })
+            .bg(if workspace.branch_menu_open {
+                theme.bg_tab_inactive
+            } else {
+                gpui::rgba(0x00000000)
+            })
             .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
             .on_mouse_down(
                 MouseButton::Left,
@@ -44,13 +52,16 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                     .child(
                         gpui::svg()
                             .path("icons/git_branch.svg")
-                            .text_color(if workspace.branch_menu_open { theme.text_primary } else { theme.text_muted })
-                            .size(px(14.0))
-                    )
+                            .text_color(if workspace.branch_menu_open {
+                                theme.text_primary
+                            } else {
+                                theme.text_muted
+                            })
+                            .size(px(14.0)),
+                    ),
             )
             .child(workspace.git_branch.clone())
     };
-
 
     div()
         .id("title-bar")
@@ -86,14 +97,25 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
         .child(
             div()
                 .relative()
+                .flex()
+                .items_center()
+                .gap_1()
                 .child(
                     div()
                         .id("theme-btn")
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .text_color(if workspace.theme_menu_open { theme.text_primary } else { theme.text_muted })
-                        .bg(if workspace.theme_menu_open { theme.bg_tab_inactive } else { gpui::rgba(0x00000000) })
+                        .text_color(if workspace.theme_menu_open {
+                            theme.text_primary
+                        } else {
+                            theme.text_muted
+                        })
+                        .bg(if workspace.theme_menu_open {
+                            theme.bg_tab_inactive
+                        } else {
+                            gpui::rgba(0x00000000)
+                        })
                         .text_size(px(12.0))
                         .cursor_pointer()
                         .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
@@ -104,7 +126,47 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                                 this.toggle_theme_menu(cx);
                             }),
                         )
-                        .child("Theme")
+                        .child("Theme"),
                 )
+                .child(
+                    div()
+                        .id("settings-btn")
+                        .relative()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .text_color(if workspace.settings_open {
+                            theme.text_primary
+                        } else {
+                            theme.text_muted
+                        })
+                        .text_size(px(12.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            _cx.listener(|this, _e, _w, cx| {
+                                cx.stop_propagation();
+                                if this.update_info.is_some() {
+                                    this.settings_section =
+                                        crate::components::settings::SettingsSection::About;
+                                }
+                                this.toggle_settings(cx);
+                            }),
+                        )
+                        .child("Settings")
+                        .when(workspace.update_info.is_some(), |this| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .top(px(1.0))
+                                    .right(px(2.0))
+                                    .w(px(6.0))
+                                    .h(px(6.0))
+                                    .rounded_full()
+                                    .bg(theme.accent),
+                            )
+                        }),
+                ),
         )
 }

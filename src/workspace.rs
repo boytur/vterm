@@ -1,3 +1,4 @@
+use crate::components::settings::{SettingsSection, render_settings};
 use crate::components::sidebar::render_sidebar;
 use crate::components::tab_bar::render_tab_bar;
 use crate::components::terminal::render_terminal_view;
@@ -8,6 +9,17 @@ use gpui::*;
 
 use crate::pty::PtyTerminal;
 use crate::ui::{button::button, modal::modal_overlay};
+
+fn process_cwd(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("lsof")
+        .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
+        .output()
+        .ok()?;
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix('n').map(str::to_string))
+}
 
 pub struct Workspace {
     pub state: AppState,
@@ -20,11 +32,20 @@ pub struct Workspace {
     pub git_branch: String,
     pub git_branches: Vec<String>,
     pub theme_menu_open: bool,
+    pub settings_open: bool,
+    pub settings_section: SettingsSection,
     pub branch_menu_open: bool,
     pub alert_modal: Option<(String, String)>,
     pub selection: Option<((u16, u16), (u16, u16))>,
     pub selecting: bool,
     pub toast: Option<String>,
+    pub update_info: Option<crate::update::UpdateInfo>,
+    pub update_checking: bool,
+    pub update_downloading: bool,
+    pub update_download_progress: Option<f32>,
+    pub update_staged: Option<std::path::PathBuf>,
+    pub update_installing: bool,
+    pub update_error: Option<String>,
 }
 
 impl Workspace {
@@ -34,33 +55,31 @@ impl Workspace {
         let term_idx = ws.active_term;
         let term_entity = self.terminals.get(ws_idx)?.get(term_idx)?;
         let pid = term_entity.read(cx).child_pid?;
-        
-        let output = std::process::Command::new("lsof")
-            .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
-            .output()
-            .ok()?;
-            
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            if let Some(stripped) = line.strip_prefix('n') {
-                return Some(stripped.to_string());
-            }
-        }
-        None
+        process_cwd(pid)
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let state = AppState::new();
+        let mut state = AppState::new();
+        let mut state_changed = false;
         let mut terminals = Vec::new();
-        for ws in &state.workspaces {
+        for ws in &mut state.workspaces {
             let mut ws_terms = Vec::new();
-            for term_data in &ws.terminals {
+            for term_data in &mut ws.terminals {
                 let cwd = term_data.cwd.clone();
-                let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, cx));
+                let session_name = term_data.session_name.clone();
+                let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, cx));
+                let actual_session = term.read(cx).session_name.clone();
+                if term_data.session_name != actual_session {
+                    term_data.session_name = actual_session;
+                    state_changed = true;
+                }
                 cx.observe(&term, |_, _, cx| cx.notify()).detach();
                 ws_terms.push(term);
             }
             terminals.push(ws_terms);
+        }
+        if state_changed {
+            state.save().ok();
         }
 
         let mut this = Self {
@@ -74,79 +93,107 @@ impl Workspace {
             git_branch: String::new(),
             git_branches: Vec::new(),
             theme_menu_open: false,
+            settings_open: false,
+            settings_section: SettingsSection::Appearance,
             branch_menu_open: false,
             alert_modal: None,
             selection: None,
             selecting: false,
             toast: None,
+            update_info: None,
+            update_checking: false,
+            update_downloading: false,
+            update_download_progress: None,
+            update_staged: None,
+            update_installing: false,
+            update_error: None,
         };
-        
+
         this.poll_git_branch(cx);
+        this.check_for_updates(cx);
+        this.schedule_update_check(cx);
         this
     }
-
 
     fn poll_git_branch(&mut self, cx: &mut Context<Self>) {
         let mut active_pid = None;
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get(ws_idx) {
             let term_idx = ws.active_term;
-            if let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(term_idx)) {
+            if let Some(term_entity) = self
+                .terminals
+                .get(ws_idx)
+                .and_then(|terms| terms.get(term_idx))
+            {
                 active_pid = term_entity.read(cx).child_pid;
             }
         }
 
         let executor = cx.background_executor().clone();
-        cx.spawn(move |workspace: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
-            let mut async_cx = cx.clone();
-            async move {
-                let (branch, _cwd) = executor.spawn(async move {
-                    let mut cwd = None;
-                    if let Some(pid) = active_pid
-                        && let Ok(output) = std::process::Command::new("lsof")
-                            .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
-                            .output()
-                        {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            for line in stdout.lines() {
-                                if let Some(stripped) = line.strip_prefix('n') {
-                                    cwd = Some(stripped.to_string());
-                                    break;
+        cx.spawn(
+            move |workspace: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let (branch, _cwd) = executor
+                        .spawn(async move {
+                            let mut cwd = None;
+                            if let Some(pid) = active_pid
+                                && let Ok(output) = std::process::Command::new("lsof")
+                                    .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
+                                    .output()
+                            {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                for line in stdout.lines() {
+                                    if let Some(stripped) = line.strip_prefix('n') {
+                                        cwd = Some(stripped.to_string());
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                    
-                    let mut branch = String::new();
-                    if let Some(ref c) = cwd
-                        && let Ok(output) = std::process::Command::new("git")
-                            .args(["branch", "--show-current"])
-                            .current_dir(c)
-                            .output()
-                        {
-                            let stdout = String::from_utf8_lossy(&output.stdout);
-                            branch = stdout.trim().to_string();
-                        }
-                    (branch, cwd)
-                }).await;
 
-                workspace.update(&mut async_cx, |this, cx| {
-                    if this.git_branch != branch {
-                        this.git_branch = branch;
-                        cx.notify();
-                    }
-                }).ok();
-            }
-        }).detach();
-        
-        cx.spawn(|this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
-            let mut async_cx = cx.clone();
-            async move {
-                async_cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
-                this.update(&mut async_cx, |this, cx| {
-                    this.poll_git_branch(cx);
-                }).ok();
-            }
-        }).detach();
+                            let mut branch = String::new();
+                            if let Some(ref c) = cwd
+                                && let Ok(output) = std::process::Command::new("git")
+                                    .args(["branch", "--show-current"])
+                                    .current_dir(c)
+                                    .output()
+                            {
+                                let stdout = String::from_utf8_lossy(&output.stdout);
+                                branch = stdout.trim().to_string();
+                            }
+                            (branch, cwd)
+                        })
+                        .await;
+
+                    workspace
+                        .update(&mut async_cx, |this, cx| {
+                            if this.git_branch != branch {
+                                this.git_branch = branch;
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                }
+            },
+        )
+        .detach();
+
+        cx.spawn(
+            |this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    async_cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_secs(2))
+                        .await;
+                    this.update(&mut async_cx, |this, cx| {
+                        this.poll_git_branch(cx);
+                    })
+                    .ok();
+                }
+            },
+        )
+        .detach();
     }
 
     pub fn toggle_theme_menu(&mut self, cx: &mut Context<Self>) {
@@ -154,35 +201,244 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn toggle_settings(&mut self, cx: &mut Context<Self>) {
+        self.settings_open = !self.settings_open;
+        self.theme_menu_open = false;
+        self.branch_menu_open = false;
+        cx.notify();
+    }
+
+    pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if self.update_checking || self.update_downloading || self.update_installing {
+            return;
+        }
+
+        self.update_checking = true;
+        self.update_error = None;
+        cx.notify();
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(
+            move |workspace: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = executor
+                        .spawn(async { crate::update::check_for_update_detailed() })
+                        .await;
+
+                    workspace
+                        .update(&mut async_cx, |this, cx| {
+                            this.update_checking = false;
+                            match result {
+                                Ok(Some(info)) => {
+                                    if this
+                                        .update_info
+                                        .as_ref()
+                                        .is_some_and(|current| current.version != info.version)
+                                    {
+                                        if let Some(staged) = this.update_staged.take() {
+                                            let _ = std::fs::remove_dir_all(staged);
+                                        }
+                                    }
+                                    this.update_info = Some(info.clone());
+                                    this.update_error = None;
+                                }
+                                Ok(None) => {
+                                    this.update_error = None;
+                                    if this.update_staged.is_none() {
+                                        this.update_info = None;
+                                    }
+                                }
+                                Err(error) => {
+                                    this.update_error = Some(error);
+                                }
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn schedule_update_check(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(
+            |this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    async_cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_secs(60 * 60))
+                        .await;
+                    this.update(&mut async_cx, |this, cx| {
+                        this.check_for_updates(cx);
+                        this.schedule_update_check(cx);
+                    })
+                    .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn snapshot_session(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        for (ws_idx, ws) in self.state.workspaces.iter_mut().enumerate() {
+            for (term_idx, term_data) in ws.terminals.iter_mut().enumerate() {
+                let Some(term) = self
+                    .terminals
+                    .get(ws_idx)
+                    .and_then(|terms| terms.get(term_idx))
+                else {
+                    continue;
+                };
+                let terminal = term.read(cx);
+                if let Some(pid) = terminal.child_pid {
+                    term_data.cwd = process_cwd(pid).or_else(|| term_data.cwd.clone());
+                }
+                if term_data.session_name != terminal.session_name {
+                    term_data.session_name = terminal.session_name.clone();
+                }
+            }
+        }
+        self.state.save().map_err(|error| error.to_string())
+    }
+
+    pub fn download_update(&mut self, info: crate::update::UpdateInfo, cx: &mut Context<Self>) {
+        if self.update_downloading || self.update_staged.is_some() || !info.can_auto_install {
+            return;
+        }
+
+        let (progress_tx, progress_rx) = async_channel::unbounded();
+        self.update_downloading = true;
+        self.update_download_progress = Some(0.0);
+        self.update_error = None;
+        cx.notify();
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(
+            move |workspace: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    while let Ok(progress) = progress_rx.recv().await {
+                        if workspace
+                            .update(&mut async_cx, |this, cx| {
+                                this.update_download_progress = Some(progress);
+                                cx.notify();
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            },
+        )
+        .detach();
+
+        cx.spawn(
+            move |workspace: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = executor
+                        .spawn(async move { crate::update::download_update(&info, progress_tx) })
+                        .await;
+
+                    workspace
+                        .update(&mut async_cx, |this, cx| {
+                            this.update_downloading = false;
+                            match result {
+                                Ok(path) => {
+                                    this.update_staged = Some(path);
+                                    this.update_download_progress = Some(1.0);
+                                }
+                                Err(error) => {
+                                    this.update_download_progress = None;
+                                    this.update_error = Some(error);
+                                }
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    pub fn install_update(&mut self, cx: &mut Context<Self>) {
+        if self.update_installing {
+            return;
+        }
+
+        let Some(staged_app) = self.update_staged.clone() else {
+            return;
+        };
+
+        if let Err(error) = self.snapshot_session(cx) {
+            self.update_error = Some(format!("Could not save session before update: {error}"));
+            cx.notify();
+            return;
+        }
+        self.update_installing = true;
+        cx.notify();
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(
+            move |workspace: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+                let mut async_cx = cx.clone();
+                async move {
+                    let result = executor
+                        .spawn(async move { crate::update::install_update(&staged_app) })
+                        .await;
+
+                    workspace
+                        .update(&mut async_cx, |this, cx| {
+                            this.update_installing = false;
+                            if let Err(error) = result {
+                                this.update_error = Some(error);
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    pub fn select_settings_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        self.settings_section = section;
+        cx.notify();
+    }
+
     pub fn toggle_branch_menu(&mut self, cx: &mut Context<Self>) {
         self.branch_menu_open = !self.branch_menu_open;
         if self.branch_menu_open
             && let Some(cwd) = self.get_active_terminal_cwd(cx)
-                && let Ok(output) = std::process::Command::new("git")
-                    .args(["branch", "--format=%(refname:short)"])
-                    .current_dir(cwd)
-                    .output()
-                {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
-                }
+            && let Ok(output) = std::process::Command::new("git")
+                .args(["branch", "--format=%(refname:short)"])
+                .current_dir(cwd)
+                .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+        }
         cx.notify();
     }
-    
+
     pub fn checkout_branch(&mut self, branch: &str, cx: &mut Context<Self>) {
         if let Some(cwd) = self.get_active_terminal_cwd(cx) {
             if let Ok(output) = std::process::Command::new("git")
                 .args(["checkout", branch])
                 .current_dir(&cwd)
                 .output()
-                && !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    self.alert_modal = Some((
-                        "Git Checkout Failed".to_string(),
-                        stderr.to_string(),
-                    ));
-                }
-                
+                && !output.status.success()
+            {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                self.alert_modal = Some(("Git Checkout Failed".to_string(), stderr.to_string()));
+            }
+
             if let Ok(output) = std::process::Command::new("git")
                 .args(["branch", "--show-current"])
                 .current_dir(&cwd)
@@ -196,7 +452,12 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_theme(&mut self, theme_fn: fn() -> crate::theme::Theme, theme_name: String, cx: &mut Context<Self>) {
+    pub fn set_theme(
+        &mut self,
+        theme_fn: fn() -> crate::theme::Theme,
+        theme_name: String,
+        cx: &mut Context<Self>,
+    ) {
         self.state.theme = theme_fn();
         self.state.theme_name = Some(theme_name);
         self.theme_menu_open = false;
@@ -211,15 +472,20 @@ impl Workspace {
             .unwrap_or_else(|| "Workspace".into());
 
         let cwd = self.get_active_terminal_cwd(cx);
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, cx));
+        let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
-            terminals: vec![crate::state::TerminalData { name, cwd: cwd.clone() }],
+            terminals: vec![crate::state::TerminalData {
+                name,
+                cwd: cwd.clone(),
+                session_name,
+            }],
             active_term: 0,
         };
         self.state.workspaces.push(new_ws);
         self.state.active_workspace = self.state.workspaces.len() - 1;
-        
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, cx));
+
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
         self.terminals.push(vec![term]);
         self.state.save().ok();
@@ -227,6 +493,13 @@ impl Workspace {
     }
 
     pub fn close_tab(&mut self, ws_idx: usize, tab_idx: usize, cx: &mut Context<Self>) {
+        if let Some(term) = self
+            .terminals
+            .get(ws_idx)
+            .and_then(|terms| terms.get(tab_idx))
+        {
+            term.update(cx, |term, _| term.shutdown());
+        }
         if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
             if ws.terminals.len() > 1 {
                 ws.terminals.remove(tab_idx);
@@ -262,23 +535,29 @@ impl Workspace {
     fn active_screen_size(&self, cx: &App) -> (u16, u16) {
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
-                let term = term.read(cx);
-                let parser = term.parser.lock().unwrap();
-                return parser.screen().size();
-            }
+            && let Some(term) = self
+                .terminals
+                .get(ws_idx)
+                .and_then(|t| t.get(ws.active_term))
+        {
+            let term = term.read(cx);
+            let parser = term.parser.lock().unwrap();
+            return parser.screen().size();
+        }
         (24, 80)
     }
 
-    pub     fn cell_at(&self, pos: gpui::Point<gpui::Pixels>, cx: &App) -> (u16, u16) {
+    pub fn cell_at(&self, pos: gpui::Point<gpui::Pixels>, cx: &App) -> (u16, u16) {
         let font_size = self.state.font_size;
         let cell_w = font_size * (8.4 / 14.0);
         let cell_h = font_size * (20.0 / 14.0);
         let (rows, cols) = self.active_screen_size(cx);
         let origin_x = 192.0 + 16.0;
         let origin_y = 64.0 + 16.0;
-        let col = (((f32::from(pos.x) - origin_x) / cell_w).floor()).clamp(0.0, (cols as f32) - 1.0) as u16;
-        let row = (((f32::from(pos.y) - origin_y) / cell_h).floor()).clamp(0.0, (rows as f32) - 1.0) as u16;
+        let col = (((f32::from(pos.x) - origin_x) / cell_w).floor()).clamp(0.0, (cols as f32) - 1.0)
+            as u16;
+        let row = (((f32::from(pos.y) - origin_y) / cell_h).floor()).clamp(0.0, (rows as f32) - 1.0)
+            as u16;
         (col, row)
     }
 
@@ -313,36 +592,49 @@ impl Workspace {
 
     pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
         if let Some(text) = self.selected_text(cx)
-            && !text.trim().is_empty() {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
-                self.toast = Some("Copied!".to_string());
-                cx.spawn(|this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
+            && !text.trim().is_empty()
+        {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            self.toast = Some("Copied!".to_string());
+            cx.spawn(
+                |this: gpui::WeakEntity<Workspace>, cx: &mut gpui::AsyncApp| {
                     let mut async_cx = cx.clone();
                     async move {
-                        async_cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                        async_cx
+                            .background_executor()
+                            .timer(std::time::Duration::from_secs(2))
+                            .await;
                         this.update(&mut async_cx, |this, cx| {
                             this.toast = None;
                             cx.notify();
-                        }).ok();
+                        })
+                        .ok();
                     }
-                }).detach();
-                cx.notify();
-            }
+                },
+            )
+            .detach();
+            cx.notify();
+        }
     }
 
     pub fn write_active(&mut self, bytes: &[u8], cx: &mut App) {
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term) = self.terminals.get(ws_idx).and_then(|t| t.get(ws.active_term)) {
-                term.update(cx, |term, _| term.write(bytes));
-            }
+            && let Some(term) = self
+                .terminals
+                .get(ws_idx)
+                .and_then(|t| t.get(ws.active_term))
+        {
+            term.update(cx, |term, _| term.write(bytes));
+        }
     }
 
     pub fn paste_clipboard(&mut self, cx: &mut App) {
         if let Some(item) = cx.read_from_clipboard()
-            && let Some(text) = item.text() {
-                self.write_active(text.as_bytes(), cx);
-            }
+            && let Some(text) = item.text()
+        {
+            self.write_active(text.as_bytes(), cx);
+        }
     }
 
     pub fn on_terminal_mouse_down(
@@ -370,11 +662,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if self.selecting
-            && let Some((start, _)) = self.selection {
-                let cell = self.cell_at(event.position, cx);
-                self.selection = Some((start, cell));
-                cx.notify();
-            }
+            && let Some((start, _)) = self.selection
+        {
+            let cell = self.cell_at(event.position, cx);
+            self.selection = Some((start, cell));
+            cx.notify();
+        }
     }
 
     pub fn on_terminal_mouse_up(
@@ -413,12 +706,16 @@ impl Workspace {
         let delta_lines = f32::from(delta_pixels) / cell_h;
 
         if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(ws.active_term)) {
-                term_entity.update(cx, |term, _| {
-                    term.scroll(delta_lines);
-                });
-                cx.notify();
-            }
+            && let Some(term_entity) = self
+                .terminals
+                .get(ws_idx)
+                .and_then(|terms| terms.get(ws.active_term))
+        {
+            term_entity.update(cx, |term, _| {
+                term.scroll(delta_lines);
+            });
+            cx.notify();
+        }
     }
 
     pub fn handle_key_down(
@@ -427,6 +724,13 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.settings_open {
+            if event.keystroke.key == "escape" {
+                self.toggle_settings(cx);
+            }
+            return;
+        }
+
         let ws_idx = self.state.active_workspace;
 
         if event.keystroke.modifiers.platform {
@@ -483,10 +787,14 @@ impl Workspace {
 
         if let Some(ws) = self.state.workspaces.get(ws_idx) {
             let term_idx = ws.active_term;
-            if let Some(term_entity) = self.terminals.get(ws_idx).and_then(|terms| terms.get(term_idx)) {
+            if let Some(term_entity) = self
+                .terminals
+                .get(ws_idx)
+                .and_then(|terms| terms.get(term_idx))
+            {
                 let key = event.keystroke.key.as_str();
                 let modifiers = &event.keystroke.modifiers;
-                
+
                 let bytes = match key {
                     "enter" => vec![b'\r'],
                     "backspace" => vec![0x7f],
@@ -514,7 +822,7 @@ impl Workspace {
                     }
                     _ => vec![],
                 };
-                
+
                 if !bytes.is_empty() {
                     term_entity.update(cx, |term, _| {
                         term.write(&bytes);
@@ -594,7 +902,6 @@ impl Workspace {
         }
     }
 
-
     pub fn move_dir(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
         if from != to && from < self.state.workspaces.len() && to <= self.state.workspaces.len() {
             let ws = self.state.workspaces.remove(from);
@@ -610,7 +917,12 @@ impl Workspace {
         }
     }
 
-    pub fn open_dir_menu(&mut self, idx: usize, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+    pub fn open_dir_menu(
+        &mut self,
+        idx: usize,
+        pos: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         self.dir_context_menu = Some((idx, pos));
         cx.notify();
     }
@@ -630,6 +942,11 @@ impl Workspace {
 
     pub fn delete_dir(&mut self, idx: usize, cx: &mut Context<Self>) {
         if self.state.workspaces.len() > 1 {
+            if let Some(terms) = self.terminals.get(idx) {
+                for term in terms {
+                    term.update(cx, |term, _| term.shutdown());
+                }
+            }
             self.state.workspaces.remove(idx);
             self.terminals.remove(idx);
             if self.state.active_workspace >= self.state.workspaces.len() {
@@ -645,21 +962,29 @@ impl Workspace {
     pub fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
-            && from != to && from < ws.terminals.len() && to <= ws.terminals.len() {
-                let term_data = ws.terminals.remove(from);
-                let term = self.terminals[ws_idx].remove(from);
-                let new_to = if from < to { to - 1 } else { to };
-                ws.terminals.insert(new_to, term_data);
-                self.terminals[ws_idx].insert(new_to, term);
-                if ws.active_term == from {
-                    ws.active_term = new_to;
-                }
-                self.state.save().ok();
-                cx.notify();
+            && from != to
+            && from < ws.terminals.len()
+            && to <= ws.terminals.len()
+        {
+            let term_data = ws.terminals.remove(from);
+            let term = self.terminals[ws_idx].remove(from);
+            let new_to = if from < to { to - 1 } else { to };
+            ws.terminals.insert(new_to, term_data);
+            self.terminals[ws_idx].insert(new_to, term);
+            if ws.active_term == from {
+                ws.active_term = new_to;
             }
+            self.state.save().ok();
+            cx.notify();
+        }
     }
 
-    pub fn open_tab_menu(&mut self, idx: usize, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+    pub fn open_tab_menu(
+        &mut self,
+        idx: usize,
+        pos: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         self.tab_context_menu = Some((idx, pos));
         cx.notify();
     }
@@ -672,11 +997,12 @@ impl Workspace {
     pub fn select_term(&mut self, idx: usize, cx: &mut Context<Self>) {
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
-            && idx < ws.terminals.len() {
-                ws.active_term = idx;
-                self.state.save().ok();
-                cx.notify();
-            }
+            && idx < ws.terminals.len()
+        {
+            ws.active_term = idx;
+            self.state.save().ok();
+            cx.notify();
+        }
     }
 
     pub fn delete_term(&mut self, idx: usize, cx: &mut Context<Self>) {
@@ -687,12 +1013,17 @@ impl Workspace {
         let ws_idx = self.state.active_workspace;
         let cwd = self.get_active_terminal_cwd(cx);
         let name = "Terminal".to_string();
-        
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), cx));
+
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, cx));
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
-        
+        let session_name = term.read(cx).session_name.clone();
+
         if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
-            ws.terminals.push(crate::state::TerminalData { name, cwd });
+            ws.terminals.push(crate::state::TerminalData {
+                name,
+                cwd,
+                session_name,
+            });
             ws.active_term = ws.terminals.len() - 1;
             self.terminals[ws_idx].push(term);
             self.state.save().ok();
@@ -703,10 +1034,11 @@ impl Workspace {
     pub fn start_renaming_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term) = ws.terminals.get(idx) {
-                self.renaming_tab_modal = Some((idx, term.name.clone()));
-                cx.notify();
-            }
+            && let Some(term) = ws.terminals.get(idx)
+        {
+            self.renaming_tab_modal = Some((idx, term.name.clone()));
+            cx.notify();
+        }
     }
 
     pub fn start_renaming_dir(&mut self, idx: usize, cx: &mut Context<Self>) {
@@ -714,8 +1046,8 @@ impl Workspace {
             self.renaming_dir_modal = Some((idx, ws.name.clone()));
             cx.notify();
         }
-}
     }
+}
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = &self.state.theme;
@@ -780,28 +1112,38 @@ impl Render for Workspace {
             .bg(theme.bg_main)
             .text_color(theme.text_primary)
             .text_size(px(13.0))
-            .child(render_title_bar(self, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(render_sidebar(self, cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .flex()
-                            .flex_col()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .child(render_tab_bar(self, cx))
-                            .child(render_terminal_view(self, window, cx, window.viewport_size())),
-                    )
-            );
+            .child(render_title_bar(self, cx));
+
+        root = root.child(
+            div()
+                .flex_1()
+                .w_full()
+                .flex()
+                .flex_row()
+                .min_h_0()
+                .overflow_hidden()
+                .child(render_sidebar(self, cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .h_full()
+                        .flex()
+                        .flex_col()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(render_tab_bar(self, cx))
+                        .child(render_terminal_view(
+                            self,
+                            window,
+                            cx,
+                            window.viewport_size(),
+                        )),
+                ),
+        );
+
+        if self.settings_open {
+            root = root.child(render_settings(self, cx));
+        }
 
         if let Some((idx, pos)) = self.tab_context_menu {
             root = root.child(
@@ -824,7 +1166,7 @@ impl Render for Workspace {
                         div()
                             .p_2()
                             .rounded_sm()
-                            .hover(|s| s.bg(rgb(0x3a3d3e)))
+                            .hover(|s| s.bg(theme.bg_tab_inactive))
                             .cursor_pointer()
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -839,8 +1181,8 @@ impl Render for Workspace {
                         div()
                             .p_2()
                             .rounded_sm()
-                            .text_color(rgb(0xff5555))
-                            .hover(|s| s.bg(rgb(0x4a4d4e)))
+                            .text_color(theme.ansi[1])
+                            .hover(|s| s.bg(theme.bg_tab_inactive))
                             .cursor_pointer()
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -862,7 +1204,7 @@ impl Render for Workspace {
                 div()
                     .w_full()
                     .p_2()
-                    .bg(rgb(0x2c2c2e))
+                    .bg(theme.bg_tab_inactive)
                     .rounded_md()
                     .border_1()
                     .border_color(theme.border)
@@ -946,21 +1288,6 @@ impl Render for Workspace {
         }
 
         if self.theme_menu_open {
-            let themes = [
-                ("ubuntu", crate::theme::Theme::ubuntu as fn() -> crate::theme::Theme),
-                ("zed_dark", crate::theme::Theme::zed_dark),
-                ("dracula", crate::theme::Theme::dracula),
-                ("nord", crate::theme::Theme::nord),
-                ("gruvbox_dark", crate::theme::Theme::gruvbox_dark),
-                ("one_dark", crate::theme::Theme::one_dark),
-                ("solarized_dark", crate::theme::Theme::solarized_dark),
-                ("catppuccin_mocha", crate::theme::Theme::catppuccin_mocha),
-                ("tokyo_night", crate::theme::Theme::tokyo_night),
-                ("monokai", crate::theme::Theme::monokai),
-                ("ayu_dark", crate::theme::Theme::ayu_dark),
-                ("github_dark", crate::theme::Theme::github_dark),
-            ];
-            
             let mut list = div()
                 .id("theme-dropdown")
                 .absolute()
@@ -979,22 +1306,12 @@ impl Render for Workspace {
                 .flex_col()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
-                
-            for (name, func) in themes {
+
+            for (name, func) in crate::theme::Theme::builtins() {
                 let n = name.to_string();
                 let is_active = self.state.theme_name.as_deref() == Some(name);
-                let display_name = name.split('_')
-                    .map(|w| {
-                        let mut chars = w.chars();
-                        if let Some(c) = chars.next() {
-                            c.to_uppercase().collect::<String>() + chars.as_str()
-                        } else {
-                            String::new()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                
+                let display_name = crate::theme::Theme::display_name(name);
+
                 list = list.child(
                     div()
                         .id(name)
@@ -1002,14 +1319,18 @@ impl Render for Workspace {
                         .rounded_sm()
                         .hover(|s| s.bg(theme.bg_tab_inactive))
                         .cursor_pointer()
-                        .text_color(if is_active { theme.accent } else { theme.text_primary })
+                        .text_color(if is_active {
+                            theme.accent
+                        } else {
+                            theme.text_primary
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _e, _w, cx| {
                                 this.set_theme(func, n.clone(), cx);
                             }),
                         )
-                        .child(display_name)
+                        .child(display_name),
                 );
             }
             root = root.child(list);
@@ -1023,7 +1344,7 @@ impl Render for Workspace {
                 div()
                     .w_full()
                     .p_2()
-                    .bg(rgb(0x2c2c2e))
+                    .bg(theme.bg_tab_inactive)
                     .rounded_md()
                     .border_1()
                     .border_color(theme.border)
@@ -1069,17 +1390,15 @@ impl Render for Workspace {
                     .text_color(theme.text_primary)
                     .text_size(px(12.0))
                     .child(msg),
-                div()
-                    .flex()
-                    .w_full()
-                    .justify_end()
-                    .child(button("OK", theme, true).w(px(80.0)).on_mouse_down(
+                div().flex().w_full().justify_end().child(
+                    button("OK", theme, true).w(px(80.0)).on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _e, _w, cx| {
                             this.alert_modal = None;
                             cx.notify();
                         }),
-                    )),
+                    ),
+                ),
             ));
         }
 
@@ -1107,13 +1426,13 @@ impl Render for Workspace {
                         .p_2()
                         .text_color(theme.text_muted)
                         .text_size(px(11.0))
-                        .child("Local Branches")
+                        .child("Local Branches"),
                 );
-                
+
             for branch in &self.git_branches {
                 let b = branch.clone();
                 let is_active = self.git_branch == *branch;
-                
+
                 list = list.child(
                     div()
                         .id(gpui::SharedString::from(branch.clone()))
@@ -1125,21 +1444,23 @@ impl Render for Workspace {
                         .gap_2()
                         .hover(|s| s.bg(theme.bg_tab_inactive))
                         .cursor_pointer()
-                        .text_color(if is_active { theme.accent } else { theme.text_primary })
+                        .text_color(if is_active {
+                            theme.accent
+                        } else {
+                            theme.text_primary
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _e, _w, cx| {
                                 this.checkout_branch(&b, cx);
                             }),
                         )
-                        .child(
-                            if is_active {
-                                div().w(px(12.0)).child("✓")
-                            } else {
-                                div().w(px(12.0))
-                            }
-                        )
-                        .child(branch.clone())
+                        .child(if is_active {
+                            div().w(px(12.0)).child("✓")
+                        } else {
+                            div().w(px(12.0))
+                        })
+                        .child(branch.clone()),
                 );
             }
             root = root.child(list);
@@ -1159,7 +1480,7 @@ impl Render for Workspace {
                     .px_4()
                     .py_2()
                     .text_color(theme.text_primary)
-                    .child(msg.clone())
+                    .child(msg.clone()),
             );
         }
 

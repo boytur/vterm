@@ -62,6 +62,7 @@
         <a class="hover:text-accent transition" href="#preview">Preview</a>
         <a class="hover:text-accent transition" href="#features">Features</a>
         <a class="hover:text-accent transition" href="#themes">Themes</a>
+        <a class="hover:text-accent transition" href="#updates">What's new</a>
         <a class="hover:text-accent transition" href="#install">Install</a>
         <a class="hover:text-accent transition" href="https://github.com/boytur/vterm" target="_blank" rel="noreferrer">GitHub</a>
       </div>
@@ -138,11 +139,11 @@
       </div>
       <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
         <h3 class="text-lg font-semibold text-white">Customizable Themes</h3>
-        <p class="mt-2 text-sm text-gray-400">Ubuntu, Zed Dark, Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, and more.</p>
+        <p class="mt-2 text-sm text-gray-400">27 built-in light, dark, high-contrast, and colorful themes with live previews.</p>
       </div>
       <div class="p-6 rounded-xl border border-edge bg-panel hover:border-accent transition">
         <h3 class="text-lg font-semibold text-white">Persisted State</h3>
-        <p class="mt-2 text-sm text-gray-400">Your tabs, workspaces, and theme selections persist across restarts.</p>
+        <p class="mt-2 text-sm text-gray-400">Your tabs, workspaces, theme selections, and terminal sessions persist across restarts.</p>
       </div>
     </div>
   </section>
@@ -151,8 +152,28 @@
   <section id="themes" class="border-y border-edge bg-panel/40">
     <div class="max-w-6xl mx-auto px-6 py-20">
       <h2 class="text-3xl font-bold text-white text-center">Pick your vibe</h2>
-      <p class="text-center text-gray-400 mt-3">Click a theme to preview it live.</p>
+      <p class="text-center text-gray-400 mt-3">27 built-in themes. Click one to preview its palette live.</p>
       <div id="theme-grid" class="mt-10 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"></div>
+    </div>
+  </section>
+
+  <!-- What's new -->
+  <section id="updates" class="max-w-6xl mx-auto px-6 py-20">
+    <div class="max-w-3xl mx-auto">
+      <div class="flex items-center justify-between gap-4">
+        <h2 class="text-3xl font-bold text-white">What's new</h2>
+        <span class="px-3 py-1 rounded-full border border-accent text-xs text-accent">Next release</span>
+      </div>
+      <div class="mt-8 rounded-xl border border-edge bg-panel p-6">
+        <h3 class="text-lg font-semibold text-white">Themes, settings, and safer updates</h3>
+        <ul class="mt-4 space-y-3 text-sm text-gray-400 list-disc list-inside">
+          <li>Added 27 built-in themes, including light, high-contrast, and VS Code-inspired palettes.</li>
+          <li>Added a settings dialog with Appearance, Terminal, and About sections.</li>
+          <li>Updates can download in the background and relaunch without losing terminal sessions.</li>
+          <li>New-version detection stays visible from the Settings badge until you act.</li>
+        </ul>
+      </div>
+      <p class="mt-4 text-sm text-gray-500">See the full history in <a class="text-accent hover:underline" href="https://github.com/boytur/vterm/blob/master/CHANGELOG.md" target="_blank" rel="noreferrer">CHANGELOG.md</a>.</p>
     </div>
   </section>
 

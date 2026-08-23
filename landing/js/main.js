@@ -4,8 +4,23 @@
   document.getElementById("year").textContent = new Date().getFullYear();
 
   const themes = [
+    { name: "Light", bg: "#f7f8fa", accent: "#0969da" },
+    { name: "Midnight", bg: "#141827", accent: "#8ea7ff" },
+    { name: "Ocean", bg: "#10202a", accent: "#4fd1c5" },
+    { name: "Forest", bg: "#17201a", accent: "#8fcf72" },
+    { name: "Rose", bg: "#21171d", accent: "#f08cae" },
+    { name: "Paper", bg: "#fbf8f2", accent: "#b45f28" },
+    { name: "Lavender", bg: "#f7f4ff", accent: "#7957c8" },
+    { name: "Sand", bg: "#f8f3e8", accent: "#b86b3e" },
+    { name: "High Contrast", bg: "#000000", accent: "#00e5ff" },
+    { name: "One Light", bg: "#fafafa", accent: "#4078f2" },
+    { name: "VS Code Light+", bg: "#ffffff", accent: "#0066bf" },
+    { name: "VS Code Quiet Light", bg: "#f5f5f5", accent: "#2f6f9f" },
+    { name: "Solarized Light", bg: "#fdf6e3", accent: "#268bd2" },
     { name: "Ubuntu", bg: "#300a24", accent: "#e95420" },
     { name: "Zed Dark", bg: "#1e1e1e", accent: "#007fd4" },
+    { name: "VS Code Dark+", bg: "#1e1e1e", accent: "#007acc" },
+    { name: "VS Code Abyss", bg: "#000c18", accent: "#75beff" },
     { name: "Dracula", bg: "#282a36", accent: "#bd93f9" },
     { name: "Nord", bg: "#2e3440", accent: "#88c0d0" },
     { name: "Gruvbox", bg: "#282828", accent: "#fe8019" },
@@ -53,7 +68,7 @@
     { cls: "cmd", text: "cargo run --release\n" },
     { cls: "out", text: "   Compiling vterm v0.1.0\n" },
     { cls: "ok", text: "    Finished release [optimized]\n" },
-    { cls: "out", text: "  vterm ready · 12 themes loaded\n" },
+    { cls: "out", text: "  vterm ready · 27 themes loaded\n" },
   ];
 
   const demo = document.getElementById("terminal-demo");

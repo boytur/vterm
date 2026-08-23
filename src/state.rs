@@ -8,6 +8,8 @@ pub struct TerminalData {
     pub name: String,
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub session_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -49,7 +51,11 @@ impl AppState {
             Self {
                 workspaces: vec![WorkspaceData {
                     name: name.clone(),
-                    terminals: vec![TerminalData { name: name.clone(), cwd: None }],
+                    terminals: vec![TerminalData {
+                        name: name.clone(),
+                        cwd: None,
+                        session_name: None,
+                    }],
                     active_term: 0,
                 }],
                 active_workspace: 0,
@@ -70,40 +76,48 @@ impl AppState {
 
     pub fn save(&self) -> Result<(), std::io::Error> {
         let json = serde_json::to_string_pretty(self)?;
-        fs::write(Self::save_path(), json)
+        let path = Self::save_path();
+        let temp = path.with_extension("json.tmp");
+        fs::write(&temp, json)?;
+        fs::rename(temp, path)
     }
 
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
         let json = fs::read_to_string(Self::save_path())?;
         let mut state: AppState = serde_json::from_str(&json)?;
-        
-        state.theme = match state.theme_name.as_deref() {
-            Some("ubuntu") => Theme::ubuntu(),
-            Some("dracula") => Theme::dracula(),
-            Some("nord") => Theme::nord(),
-            Some("gruvbox_dark") => Theme::gruvbox_dark(),
-            Some("one_dark") => Theme::one_dark(),
-            Some("solarized_dark") => Theme::solarized_dark(),
-            Some("catppuccin_mocha") => Theme::catppuccin_mocha(),
-            Some("tokyo_night") => Theme::tokyo_night(),
-            Some("monokai") => Theme::monokai(),
-            Some("ayu_dark") => Theme::ayu_dark(),
-            Some("github_dark") => Theme::github_dark(),
-            _ => Theme::zed_dark(),
-        };
+
+        state.theme = Theme::from_name(state.theme_name.as_deref());
 
         if state.workspaces.is_empty() {
             let name = Self::default_dir_name();
             state.workspaces.push(WorkspaceData {
                 name: name.clone(),
-                terminals: vec![TerminalData { name: name.clone(), cwd: None }],
+                terminals: vec![TerminalData {
+                    name: name.clone(),
+                    cwd: None,
+                    session_name: None,
+                }],
                 active_term: 0,
             });
         }
+        for workspace in &mut state.workspaces {
+            if workspace.terminals.is_empty() {
+                workspace.terminals.push(TerminalData {
+                    name: workspace.name.clone(),
+                    cwd: None,
+                    session_name: None,
+                });
+            }
+            workspace.active_term = workspace
+                .active_term
+                .min(workspace.terminals.len().saturating_sub(1));
+        }
+        state.active_workspace = state
+            .active_workspace
+            .min(state.workspaces.len().saturating_sub(1));
         Ok(state)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -117,6 +131,7 @@ mod tests {
                 terminals: vec![TerminalData {
                     name: "Terminal".into(),
                     cwd: None,
+                    session_name: None,
                 }],
                 active_term: 0,
             }],

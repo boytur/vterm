@@ -1,9 +1,11 @@
 use std::io::Write;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_channel::{Receiver, Sender};
 use gpui::{Context, WeakEntity};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use vt100::Parser;
 
 pub struct PtyTerminal {
@@ -12,10 +14,15 @@ pub struct PtyTerminal {
     master: Option<Box<dyn MasterPty + Send>>,
     child: Option<Box<dyn Child + Send>>,
     pub child_pid: Option<u32>,
+    pub session_name: Option<String>,
 }
 
 impl PtyTerminal {
-    pub fn new_with_cwd(cwd: Option<String>, cx: &mut Context<Self>) -> Self {
+    pub fn new_with_cwd(
+        cwd: Option<String>,
+        requested_session: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let parser = Arc::new(Mutex::new(Parser::new(24, 80, 10000)));
         let parser_clone = parser.clone();
 
@@ -29,16 +36,32 @@ impl PtyTerminal {
             Ok(pair) => pair,
             Err(e) => {
                 eprintln!("vterm: failed to open pty: {e}");
-                return dead_terminal(parser);
+                return dead_terminal(parser, None);
             }
         };
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string());
-        let mut cmd = CommandBuilder::new(shell);
+        let mut session_name = None;
+        let mut cmd = CommandBuilder::new(&shell);
         cmd.args(["-l"]);
         if let Some(cwd) = cwd.as_deref() {
             cmd.cwd(cwd);
         }
+
+        #[cfg(target_os = "macos")]
+        if screen_available() {
+            let name = requested_session
+                .filter(|name| valid_session_name(name))
+                .unwrap_or_else(new_session_name);
+            ensure_screen_session(&name, cwd.as_deref(), &shell);
+            session_name = Some(name.clone());
+            cmd = CommandBuilder::new("screen");
+            cmd.args(["-xRR", &name]);
+            if let Some(cwd) = cwd.as_deref() {
+                cmd.cwd(cwd);
+            }
+        }
+
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
 
@@ -46,7 +69,7 @@ impl PtyTerminal {
             Ok(child) => child,
             Err(e) => {
                 eprintln!("vterm: failed to spawn shell: {e}");
-                return dead_terminal(parser);
+                return dead_terminal(parser, session_name);
             }
         };
 
@@ -54,14 +77,14 @@ impl PtyTerminal {
             Ok(reader) => reader,
             Err(e) => {
                 eprintln!("vterm: failed to take reader: {e}");
-                return dead_terminal(parser);
+                return dead_terminal(parser, session_name);
             }
         };
         let writer = match pair.master.take_writer() {
             Ok(writer) => writer,
             Err(e) => {
                 eprintln!("vterm: failed to take writer: {e}");
-                return dead_terminal(parser);
+                return dead_terminal(parser, session_name);
             }
         };
 
@@ -103,6 +126,20 @@ impl PtyTerminal {
             master: Some(pair.master),
             child: Some(child),
             child_pid,
+            session_name,
+        }
+    }
+
+    pub fn shutdown(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(name) = self.session_name.as_deref() {
+            let _ = std::process::Command::new("screen")
+                .args(["-S", name, "-X", "quit"])
+                .status();
+        }
+
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
         }
     }
 
@@ -129,13 +166,13 @@ impl PtyTerminal {
     pub fn scroll(&mut self, delta_lines: f32) {
         let mut parser = self.parser.lock().unwrap();
         let current_offset = parser.screen().scrollback();
-        
+
         let new_offset = if delta_lines < 0.0 {
             current_offset.saturating_add((-delta_lines) as usize)
         } else {
             current_offset.saturating_sub(delta_lines as usize)
         };
-        
+
         parser.screen_mut().set_scrollback(new_offset);
     }
 
@@ -157,12 +194,58 @@ impl Drop for PtyTerminal {
     }
 }
 
-fn dead_terminal(parser: Arc<Mutex<Parser>>) -> PtyTerminal {
+fn dead_terminal(parser: Arc<Mutex<Parser>>, session_name: Option<String>) -> PtyTerminal {
     PtyTerminal {
         parser,
         writer: Box::new(std::io::sink()),
         master: None,
         child: None,
         child_pid: None,
+        session_name,
     }
+}
+
+#[cfg(target_os = "macos")]
+static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "macos")]
+fn screen_available() -> bool {
+    std::process::Command::new("screen")
+        .arg("-v")
+        .output()
+        .is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn valid_session_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+#[cfg(target_os = "macos")]
+fn new_session_name() -> String {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    format!(
+        "vterm-{}-{}-{}",
+        std::process::id(),
+        SESSION_COUNTER.fetch_add(1, Ordering::Relaxed),
+        nonce
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_screen_session(name: &str, cwd: Option<&str>, shell: &str) {
+    let mut command = std::process::Command::new("screen");
+    command.args(["-dmS", name, shell, "-l"]);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor");
+    let _ = command.status();
 }
