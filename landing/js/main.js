@@ -2,6 +2,7 @@
   "use strict";
 
   document.getElementById("year").textContent = new Date().getFullYear();
+  loadChangelog();
 
   const themes = [
     { name: "Light", bg: "#f7f8fa", accent: "#0969da" },
@@ -61,6 +62,71 @@
     document.querySelectorAll(".border-accent").forEach((el) => {
       el.style.borderColor = t.accent;
     });
+  }
+
+  async function loadChangelog() {
+    const version = document.getElementById("release-version");
+    const title = document.getElementById("release-title");
+    const items = document.getElementById("release-items");
+    const history = document.getElementById("release-history");
+
+    try {
+      const response = await fetch("./changelog.md", { cache: "no-store" });
+      if (!response.ok) throw new Error("changelog unavailable");
+      const releases = parseChangelog(await response.text());
+      const unreleased = releases.find((release) => release.version === "Unreleased" && release.items.length);
+      const latest = releases.find((release) => release.version !== "Unreleased");
+      const featured = unreleased || latest;
+      if (!featured) throw new Error("no release notes");
+
+      version.textContent = unreleased ? "Unreleased" : `v${featured.version}`;
+      title.textContent = unreleased ? "Coming next" : `v${featured.version}`;
+      renderItems(items, featured.items);
+      renderHistory(history, releases.filter((release) => release.version !== "Unreleased"));
+    } catch {
+      version.textContent = "Updates";
+      title.textContent = "Release notes unavailable";
+      const message = document.createElement("li");
+      message.textContent = "See GitHub for the latest release history.";
+      items.replaceChildren(message);
+    }
+  }
+
+  function parseChangelog(markdown) {
+    const releases = [];
+    let current;
+    markdown.split(/\r?\n/).forEach((line) => {
+      const heading = line.match(/^## \[([^\]]+)\](?:\s+-\s+(.+))?$/);
+      if (heading) {
+        current = { version: heading[1], date: heading[2] || "", items: [] };
+        releases.push(current);
+      } else if (current && /^\s*-\s+/.test(line)) {
+        current.items.push(line.replace(/^\s*-\s+/, ""));
+      }
+    });
+    return releases;
+  }
+
+  function renderItems(list, entries) {
+    list.replaceChildren(...entries.map((entry) => {
+      const item = document.createElement("li");
+      item.textContent = entry;
+      return item;
+    }));
+  }
+
+  function renderHistory(container, releases) {
+    container.replaceChildren(...releases.map((release) => {
+      const section = document.createElement("section");
+      const heading = document.createElement("h3");
+      heading.className = "text-sm font-semibold text-white";
+      heading.textContent = `v${release.version}${release.date ? ` · ${release.date}` : ""}`;
+      const list = document.createElement("ul");
+      list.className = "mt-2 space-y-2 text-sm text-gray-400 list-disc list-inside";
+      renderItems(list, release.items);
+      section.append(heading, list);
+      return section;
+    }));
   }
 
   document.querySelectorAll("[data-copy-target]").forEach((button) => {
