@@ -11,6 +11,25 @@ A high-performance, GPU-accelerated terminal emulator written in Rust using the 
 - **Customizable Themes**: Comes with multiple built-in themes (Ubuntu, Zed Dark, Dracula, Nord, Gruvbox, Tokyo Night, Catppuccin, etc.).
 - **Persisted State**: Your tabs, workspaces, and theme selections are persisted across restarts.
 
+## Install (macOS)
+
+vterm isn't notarized (no paid Apple Developer ID), so a DMG downloaded via
+browser will show "vterm is damaged" on first open — that's Gatekeeper
+rejecting an unsigned app that came in quarantined, not a broken build.
+
+Recommended — installs via curl, which doesn't quarantine the download:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash
+```
+
+Manual alternative: download the [DMG](https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg),
+drag `vterm.app` to Applications, then run:
+
+```bash
+xattr -cr /Applications/vterm.app
+```
+
 ## Prerequisites
 
 - Rust (latest stable)

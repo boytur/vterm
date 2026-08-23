@@ -160,21 +160,26 @@
   <section id="install" class="max-w-6xl mx-auto px-6 py-20">
     <h2 class="text-3xl font-bold text-white text-center">Install</h2>
     <div class="mt-10 max-w-2xl mx-auto flex flex-col items-center gap-6">
-      <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg"
-         class="w-full text-center px-6 py-4 rounded-xl bg-accent text-ink font-semibold text-lg hover:opacity-90 transition">
-        ⬇ Download vterm for macOS
-      </a>
-      <p class="text-gray-500 text-sm">Prebuilt · no compiler required · drag <code>vterm.app</code> to Applications</p>
+      <div class="w-full rounded-xl border border-edge bg-panel overflow-hidden">
+        <pre class="p-4 text-sm overflow-x-auto"><code>curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code></pre>
+      </div>
+      <p class="text-gray-500 text-sm">Installs straight to /Applications · no Gatekeeper warning</p>
 
       <details class="w-full rounded-xl border border-edge bg-panel overflow-hidden">
-        <summary class="px-4 py-3 cursor-pointer text-sm text-gray-300 hover:text-accent transition">macOS says the app is "damaged"?</summary>
-        <p class="p-4 text-sm text-gray-400 border-t border-edge leading-relaxed">
-          vterm is free and open source, so it isn't signed with a paid Apple Developer ID and isn't
-          notarized. Gatekeeper will block it on first launch. This is expected and safe — just remove
-          the quarantine flag once:
-        </p>
-        <pre class="p-4 text-sm overflow-x-auto border-t border-edge"><code>xattr -cr /Applications/vterm.app</code></pre>
-        <p class="p-4 text-sm text-gray-400 border-t border-edge">Then open it normally. Alternatively, right-click the app → <strong>Open</strong>.</p>
+        <summary class="px-4 py-3 cursor-pointer text-sm text-gray-300 hover:text-accent transition">Prefer a manual download?</summary>
+        <div class="p-4 border-t border-edge flex flex-col gap-3">
+          <a href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg"
+             class="w-full text-center px-6 py-3 rounded-xl bg-accent text-ink font-semibold hover:opacity-90 transition">
+            ⬇ Download vterm for macOS
+          </a>
+          <p class="text-sm text-gray-400 leading-relaxed">
+            vterm is free and open source, so it isn't signed with a paid Apple Developer ID and isn't
+            notarized. A browser-downloaded DMG gets quarantined, so macOS will say "vterm is damaged" on
+            first open. That's expected — just remove the quarantine flag once:
+          </p>
+          <pre class="text-sm overflow-x-auto"><code>xattr -cr /Applications/vterm.app</code></pre>
+          <p class="text-sm text-gray-400">Then open it normally. Alternatively, right-click the app → <strong>Open</strong>.</p>
+        </div>
       </details>
 
       <details class="w-full rounded-xl border border-edge bg-panel overflow-hidden">
