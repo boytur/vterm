@@ -7,6 +7,7 @@ mod components;
 mod workspace;
 mod pty;
 mod ui;
+mod update;
 
 use crate::workspace::Workspace;
 
@@ -37,5 +38,19 @@ fn main() {
         };
         cx.open_window(options, |_window, cx| cx.new(|cx| Workspace::new(cx)))
             .expect("failed to open window");
+
+        spawn_update_checker();
+    });
+}
+
+fn spawn_update_checker() {
+    std::thread::spawn(|| {
+        if let Some(info) = update::check_for_update() {
+            eprintln!(
+                "vterm: update available -> v{} ({})",
+                info.version, info.download_url
+            );
+            update::notify(&info);
+        }
     });
 }
