@@ -17,14 +17,22 @@ pub struct WorkspaceData {
     pub active_term: usize,
 }
 
+pub const DEFAULT_FONT_SIZE: f32 = 14.0;
+
 #[derive(Serialize, Deserialize)]
 pub struct AppState {
     pub workspaces: Vec<WorkspaceData>,
     pub active_workspace: usize,
     #[serde(default)]
     pub theme_name: Option<String>,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
     #[serde(skip)]
     pub theme: Theme,
+}
+
+fn default_font_size() -> f32 {
+    DEFAULT_FONT_SIZE
 }
 
 impl AppState {
@@ -46,6 +54,7 @@ impl AppState {
                 }],
                 active_workspace: 0,
                 theme_name: Some("zed_dark".to_string()),
+                font_size: DEFAULT_FONT_SIZE,
                 theme: Theme::default(),
             }
         })
