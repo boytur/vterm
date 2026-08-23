@@ -63,6 +63,45 @@
     });
   }
 
+  document.querySelectorAll("[data-copy-target]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const target = document.getElementById(button.dataset.copyTarget);
+      if (!target) return;
+
+      try {
+        await copyText(target.textContent.trim());
+        button.textContent = "Copied";
+        setTimeout(() => {
+          button.textContent = "Copy";
+        }, 1600);
+      } catch {
+        button.textContent = "Copy failed";
+        setTimeout(() => {
+          button.textContent = "Copy";
+        }, 2200);
+      }
+    });
+  });
+
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch {}
+
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    if (!copied) throw new Error("copy failed");
+  }
+
   const demoLines = [
     { cls: "prompt", text: "$ " },
     { cls: "cmd", text: "cargo run --release\n" },

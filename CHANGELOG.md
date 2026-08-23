@@ -4,6 +4,8 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+- Add copyable curl install commands to the landing page hero and install section.
+
 ## [0.2.4] - 2026-08-23
 
 - Add 27 built-in themes, including light, high-contrast, and VS Code-inspired palettes.
