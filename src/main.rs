@@ -27,20 +27,35 @@ impl gpui::AssetSource for Assets {
 }
 
 fn main() {
-    Application::new().with_assets(Assets).run(|cx: &mut App| {
-        let options = WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("vterm".into()),
-                appears_transparent: true,
-                traffic_light_position: Some(point(px(12.0), px(9.0))),
-            }),
-            ..Default::default()
-        };
-        cx.open_window(options, |_window, cx| cx.new(Workspace::new))
-            .expect("failed to open window");
+    let app = Application::new().with_assets(Assets);
 
+    // macOS fires this when the dock icon is clicked (or the app is
+    // relaunched) while no window is open. Without a handler, closing the
+    // last window strands the app running in the background with no way to
+    // bring a window back short of quitting and relaunching.
+    app.on_reopen(|cx: &mut App| {
+        if cx.windows().is_empty() {
+            open_window(cx);
+        }
+    });
+
+    app.run(|cx: &mut App| {
+        open_window(cx);
         spawn_update_checker();
     });
+}
+
+fn open_window(cx: &mut App) {
+    let options = WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some("vterm".into()),
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(12.0), px(9.0))),
+        }),
+        ..Default::default()
+    };
+    cx.open_window(options, |_window, cx| cx.new(Workspace::new))
+        .expect("failed to open window");
 }
 
 fn spawn_update_checker() {
