@@ -10,6 +10,9 @@ env:
   CARGO_TERM_COLOR: always
   MACOSX_DEPLOYMENT_TARGET: "11.0"
 
+permissions:
+  contents: write
+
 jobs:
   build-prod:
     name: Build Release (macOS)
