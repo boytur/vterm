@@ -82,9 +82,27 @@ impl PtyTerminal {
         // Finder/Dock), and CLIs downgrade to a reduced color palette.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
-        // Deliberately NO COLORFGBG or color-query replies anywhere in
-        // vterm: CLIs like opencode/codex must keep their own default
-        // palette instead of adapting to the vterm theme.
+        // Children inherit vterm's own process env, which — when vterm was
+        // launched from another terminal (e.g. `cargo run` inside Zed) —
+        // contains that terminal's identity vars. CLIs key integrations off
+        // them, so replace them with vterm's own identity.
+        cmd.env("TERM_PROGRAM", "vterm");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        for foreign in [
+            "ZED_TERM",
+            "ITERM_SESSION_ID",
+            "ITERM_PROFILE",
+            "WEZTERM_EXECUTABLE",
+            "WEZTERM_PANE",
+            "KITTY_WINDOW_ID",
+            "KITTY_PID",
+        ] {
+            cmd.env_remove(foreign);
+        }
+        // The terminal pane is always dark (see workspace terminal.rs), so
+        // advertise that: CLIs that skip color queries (codex, vim, …) use
+        // COLORFGBG to pick their dark palette. Note opencode ignores it.
+        cmd.env("COLORFGBG", "15;0");
 
         let child = match pair.slave.spawn_command(cmd) {
             Ok(child) => child,

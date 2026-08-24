@@ -4,6 +4,14 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-24
+
+- Keep the terminal surface dark regardless of the selected app theme, so CLI tools (opencode, codex, vim, …) render with their normal dark palettes and stay readable.
+- Spawned shells now identify as `TERM_PROGRAM=vterm`; the launching terminal's identity variables (`ZED_TERM`, `ITERM_*`, `WEZTERM_*`, `KITTY_*`) are no longer inherited.
+- Advertise a dark background via `COLORFGBG` so CLIs that skip color queries pick their dark palette.
+
+## [0.3.0] - 2026-08-24
+
 - Reorder terminal tabs by dragging them, with an accent-colored insertion line showing exactly where the tab will be dropped.
 - Fix inverted scroll direction when using the trackpad or mouse wheel.
 - Hide the terminal cursor while viewing scrollback history.
@@ -22,6 +30,9 @@ All notable changes to vterm are documented here.
 - Restore terminal placement and PTY sizing for new and resumed terminals.
 - Restore scrollback visibility and git branch detection from the active shell.
 - Improve ANSI black contrast in the dark theme.
+- Restructure the app into a Zed-style cargo workspace (vterm, terminal, workspace, ui, theme, auto_update crates).
+- Stop recoloring CLI output with the app theme: ANSI 0–15 use a fixed xterm-standard palette, and bold text no longer forces a white foreground.
+- Re-apply `TERM=xterm-256color` / `COLORTERM=truecolor` after the macOS screen wrapper replaces the spawn command, restoring truecolor for CLIs.
 
 ## [0.2.4] - 2026-08-23
 

@@ -9,6 +9,13 @@ const STANDARD_ANSI: [u32; 16] = [
     0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
 ];
 
+// The terminal surface stays dark regardless of the app theme. CLI default
+// palettes assume a dark background, and color probes from apps running
+// under the screen wrapper never reach us, so a light pane would leave them
+// rendering unreadable light-on-light fallbacks.
+const TERMINAL_BG: u32 = 0x0d0d0d;
+const TERMINAL_FG: u32 = 0xe8e8e8;
+
 fn vt100_color_to_gpui(color: &terminal::vt100::Color, default_color: Hsla) -> Hsla {
     match color {
         terminal::vt100::Color::Default => default_color,
@@ -162,17 +169,17 @@ pub fn render_terminal_view(
                              bold: bool,
                              inv: bool| {
                 if !text.is_empty() {
-                    let fg_base = vt100_color_to_gpui(&fg, theme.text_primary.into());
+                    let fg_base = vt100_color_to_gpui(&fg, gpui::rgb(TERMINAL_FG).into());
                     let bg_base = vt100_color_to_gpui(&bg, gpui::transparent_black());
 
                     let (final_fg, final_bg) = if inv {
                         let inv_fg = if bg == terminal::vt100::Color::Default {
-                            theme.bg_main.into()
+                            gpui::rgb(TERMINAL_BG).into()
                         } else {
                             bg_base
                         };
                         let inv_bg = if fg == terminal::vt100::Color::Default {
-                            theme.text_primary.into()
+                            gpui::rgb(TERMINAL_FG).into()
                         } else {
                             fg_base
                         };
@@ -325,7 +332,7 @@ pub fn render_terminal_view(
         .relative()
         .w_full()
         .h_full()
-        .bg(theme.bg_main)
+        .bg(gpui::rgb(TERMINAL_BG))
         .px_4()
         .pt_4()
         .pb_4()
