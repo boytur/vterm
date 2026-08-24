@@ -8,6 +8,9 @@ All notable changes to vterm are documented here.
 - Render release notes and release history on the landing page from the project changelog.
 - Redesign the landing page with responsive product-focused content, SEO metadata, and structured FAQ data.
 - Let the curl installer replace the app bundle while vterm is still running.
+- Restore terminal placement and PTY sizing for new and resumed terminals.
+- Restore scrollback visibility and git branch detection from the active shell.
+- Improve ANSI black contrast in the dark theme.
 
 ## [0.2.4] - 2026-08-23
 
