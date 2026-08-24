@@ -4,6 +4,9 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-24
+
+
 - Reorder terminal tabs by dragging them, with an accent-colored insertion line showing exactly where the tab will be dropped.
 - Fix inverted scroll direction when using the trackpad or mouse wheel.
 - Hide the terminal cursor while viewing scrollback history.
