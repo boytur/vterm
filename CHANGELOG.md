@@ -4,6 +4,8 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+- Enable GitHub Actions to create and approve pull requests so the release changelog automation works again.
+
 ## [0.3.1] - 2026-08-24
 
 - Keep the terminal surface dark regardless of the selected app theme, so CLI tools (opencode, codex, vim, …) render with their normal dark palettes and stay readable.
