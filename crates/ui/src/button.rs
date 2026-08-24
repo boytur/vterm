@@ -1,4 +1,4 @@
-use crate::theme::Theme;
+use theme::Theme;
 use gpui::*;
 
 pub fn button(label: impl IntoElement, theme: &Theme, is_primary: bool) -> Div {

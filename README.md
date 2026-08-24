@@ -6,7 +6,7 @@ A high-performance, GPU-accelerated terminal emulator written in Rust using the 
 
 - **Blazing Fast**: Powered by GPUI for native, GPU-accelerated rendering.
 - **TrueColor Support**: Full 256-color and truecolor support natively interpreted from ANSI escapes.
-- **Workspaces & Tabs**: Support for multiple isolated workspaces, sidebar navigation, and multi-tabbed terminals.
+- **Workspaces & Tabs**: Support for multiple isolated workspaces, sidebar navigation, and multi-tabbed terminals with drag-and-drop reordering.
 - **Git Integration**: Instantly see your current git branch in the title bar. Click the branch to switch branches effortlessly (with Zed-style dropdown).
 - **Customizable Themes**: Comes with 27 built-in light, dark, high-contrast, and colorful themes.
 - **Persisted State**: Your tabs, workspaces, theme selections, and terminal sessions are persisted across restarts.
@@ -50,10 +50,23 @@ xattr -cr /Applications/vterm.app
 
 ## Development
 
-- `src/components/`: Reusable UI components (Sidebar, Tab Bar, Terminal View).
-- `src/pty.rs`: Handles pseudoterminal allocation, shell spawning, and VT100 parsing.
-- `src/state.rs`: Manages application state serialization.
-- `src/theme.rs`: Defines color palettes for different themes.
+vterm is a cargo workspace, laid out like Zed's — one crate per domain:
+
+- `crates/vterm/`: Thin binary; window creation and asset loading.
+- `crates/terminal/`: Headless terminal core: PTY allocation, shell spawning, VT100 parsing, scrollback.
+- `crates/workspace/`: App shell: `Workspace` model, persisted state, sidebar/tab bar/title bar/settings, terminal view rendering.
+- `crates/ui/`: Reusable widgets (buttons, modals, text field).
+- `crates/theme/`: Built-in color palettes.
+- `crates/auto_update/`: In-app update check, download, and relaunch.
+
+Iterate with auto rebuild + relaunch on save:
+
+```bash
+./script/dev.sh            # falls back to a polling watcher
+cargo install cargo-watch  # optional: instant debounced watching
+```
+
+True hot reload isn't possible for GPUI apps (typed render state can't survive a library swap), so the loop relaunches instead.
 - `src/workspace.rs`: Core workspace logic, tab management, and git integrations.
 
 ### Changelog

@@ -1,7 +1,7 @@
-use crate::theme::Theme;
 use crate::workspace::Workspace;
 use gpui::prelude::*;
 use gpui::*;
+use theme::Theme;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct DragTab(pub usize);
@@ -26,6 +26,10 @@ impl Render for DragPreview {
 
 pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> impl IntoElement {
     let theme = &workspace.state.theme;
+    let drop_target = workspace.tab_drop_target;
+    let tab_count = workspace.state.workspaces[workspace.state.active_workspace]
+        .terminals
+        .len();
 
     div()
         .id("tab-bar")
@@ -66,9 +70,11 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
 
                     let drag_term = term.name.clone();
                     let drag_theme = theme.clone();
+                    let show_indicator = drop_target == Some(i);
 
                     div()
                         .id(("tab", i))
+                        .relative()
                         .h_full()
                         .px_4()
                         .flex_shrink_0()
@@ -80,6 +86,9 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                         .text_color(text_col)
                         .hover(|s| s.bg(theme.bg_tab_inactive))
                         .cursor_pointer()
+                        .drag_over::<DragTab>(|style, _, _, _| {
+                            style.bg(gpui::black().opacity(0.15))
+                        })
                         .on_drag(DragTab(i), move |_drag_tab, _pos, _window, cx| {
                             let drag_term = drag_term.clone();
                             let drag_theme = drag_theme.clone();
@@ -88,9 +97,28 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                 theme: drag_theme,
                             })
                         })
+                        .on_drag_move(cx.listener(
+                            move |this, event: &DragMoveEvent<DragTab>, _window, cx| {
+                                if !event.bounds.contains(&event.event.position) {
+                                    return;
+                                }
+                                let insert = if event.event.position.x < event.bounds.center().x {
+                                    i
+                                } else {
+                                    i + 1
+                                };
+                                if this.tab_drop_target != Some(insert) {
+                                    this.tab_drop_target = Some(insert);
+                                    cx.notify();
+                                }
+                            },
+                        ))
                         .on_drop(cx.listener(move |this, drag_tab: &DragTab, _window, cx| {
-                            this.move_tab(drag_tab.0, i, cx);
+                            let to = this.tab_drop_target.unwrap_or(i);
+                            this.tab_drop_target = None;
+                            this.move_tab(drag_tab.0, to, cx);
                         }))
+                        .when(show_indicator, |el| el.child(drop_indicator(theme)))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |_, _, _, cx| cx.stop_propagation()),
@@ -148,6 +176,7 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
             // Add new tab button
             div()
                 .id("add-tab")
+                .relative()
                 .h_full()
                 .px_4()
                 .flex_shrink_0()
@@ -156,9 +185,39 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .text_color(theme.text_muted)
                 .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
                 .cursor_pointer()
+                .drag_over::<DragTab>(|style, _, _, _| style.bg(gpui::black().opacity(0.15)))
+                .on_drag_move(cx.listener(
+                    move |this, event: &DragMoveEvent<DragTab>, _window, cx| {
+                        if !event.bounds.contains(&event.event.position) {
+                            return;
+                        }
+                        if this.tab_drop_target != Some(tab_count) {
+                            this.tab_drop_target = Some(tab_count);
+                            cx.notify();
+                        }
+                    },
+                ))
+                .on_drop(cx.listener(move |this, drag_tab: &DragTab, _window, cx| {
+                    let to = this.tab_drop_target.unwrap_or(tab_count);
+                    this.tab_drop_target = None;
+                    this.move_tab(drag_tab.0, to, cx);
+                }))
+                .when(drop_target == Some(tab_count), |el| {
+                    el.child(drop_indicator(theme))
+                })
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     this.add_term(window, cx);
                 }))
                 .child("+"),
         )
+}
+
+fn drop_indicator(theme: &Theme) -> impl IntoElement {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .w(px(2.0))
+        .bg(theme.accent)
 }

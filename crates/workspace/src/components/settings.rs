@@ -1,9 +1,9 @@
-use crate::theme::Theme;
-use crate::ui::button::button;
-use crate::update::CURRENT_VERSION;
 use crate::workspace::Workspace;
+use auto_update::CURRENT_VERSION;
 use gpui::prelude::*;
 use gpui::*;
+use theme::Theme;
+use ui::button::button;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {

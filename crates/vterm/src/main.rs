@@ -1,15 +1,7 @@
 #![recursion_limit = "256"]
 use gpui::*;
 
-mod components;
-mod pty;
-mod state;
-mod theme;
-mod ui;
-mod update;
-mod workspace;
-
-use crate::workspace::Workspace;
+use workspace::Workspace;
 
 struct Assets;
 
@@ -17,7 +9,7 @@ impl gpui::AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
         match path {
             "icons/git_branch.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
-                "../assets/icons/git_branch.svg"
+                "../../../assets/icons/git_branch.svg"
             )))),
             _ => Ok(None),
         }

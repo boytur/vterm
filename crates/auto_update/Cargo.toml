@@ -1,0 +1,11 @@
+[package]
+name = "auto_update"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+semver.workspace = true
+serde.workspace = true
+ureq.workspace = true

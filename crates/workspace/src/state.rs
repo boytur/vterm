@@ -1,7 +1,7 @@
-use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use theme::Theme;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TerminalData {
@@ -136,7 +136,7 @@ mod tests {
                 active_term: 0,
             }],
             active_workspace: 0,
-            theme: crate::theme::Theme::ubuntu(),
+            theme: theme::Theme::ubuntu(),
             theme_name: Some("ubuntu".to_string()),
             font_size: crate::state::DEFAULT_FONT_SIZE,
         };
