@@ -34,17 +34,8 @@ SOURCE_APP="$MOUNT_DIR/${APP_NAME}.app"
 }
 cp -R "$SOURCE_APP" "$TMP_DIR/${APP_NAME}.app"
 
-# A running old process can keep using the old bundle after installation.
-osascript -e "tell application \"${APP_NAME}\" to quit" >/dev/null 2>&1 || true
-for _ in {1..20}; do
-  pgrep -x "$APP_NAME" >/dev/null || break
-  sleep 0.25
-done
-if pgrep -x "$APP_NAME" >/dev/null; then
-  echo "Could not stop the running ${APP_NAME}; close it and try again." >&2
-  exit 1
-fi
-
+# Swap paths instead of quitting vterm. macOS keeps the running process on the
+# old bundle while new launches use the replacement at /Applications/vterm.app.
 BACKUP_APP="$TMP_DIR/${APP_NAME}.app.old"
 if [[ -d "$CURRENT_APP" ]]; then
   mv "$CURRENT_APP" "$BACKUP_APP"
@@ -56,4 +47,4 @@ fi
 xattr -dr com.apple.quarantine "$CURRENT_APP" 2>/dev/null || true
 VERSION=$(plutil -extract CFBundleShortVersionString raw -o - "$CURRENT_APP/Contents/Info.plist" 2>/dev/null || true)
 
-echo "Done. Installed v${VERSION:-unknown}. Launch with: open -a ${APP_NAME}"
+echo "Done. Installed v${VERSION:-unknown}. Relaunch vterm to use the update: open -a ${APP_NAME}"

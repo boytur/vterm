@@ -51,6 +51,6 @@ fn open_window(cx: &mut App) {
         }),
         ..Default::default()
     };
-    cx.open_window(options, |_window, cx| cx.new(Workspace::new))
+    cx.open_window(options, |window, cx| cx.new(|cx| Workspace::new(window, cx)))
         .expect("failed to open window");
 }

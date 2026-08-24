@@ -156,8 +156,8 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .text_color(theme.text_muted)
                 .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
                 .cursor_pointer()
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.add_term(cx);
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.add_term(window, cx);
                 }))
                 .child("+"),
         )

@@ -11,6 +11,24 @@ use crate::pty::PtyTerminal;
 use crate::ui::{button::button, modal::modal_overlay};
 
 fn process_cwd(pid: u32) -> Option<String> {
+    let child_pids = std::process::Command::new("pgrep")
+        .args(["-P", &pid.to_string()])
+        .output()
+        .ok()
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.trim().parse::<u32>().ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for child_pid in child_pids {
+        if let Some(cwd) = process_cwd(child_pid) {
+            return Some(cwd);
+        }
+    }
+
     let output = std::process::Command::new("lsof")
         .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
         .output()
@@ -58,8 +76,9 @@ impl Workspace {
         process_cwd(pid)
     }
 
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut state = AppState::new();
+        let (rows, cols) = Self::terminal_size(window.viewport_size(), state.font_size);
         let mut state_changed = false;
         let mut terminals = Vec::new();
         for ws in &mut state.workspaces {
@@ -67,7 +86,7 @@ impl Workspace {
             for term_data in &mut ws.terminals {
                 let cwd = term_data.cwd.clone();
                 let session_name = term_data.session_name.clone();
-                let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, cx));
+                let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, cx));
                 let actual_session = term.read(cx).session_name.clone();
                 if term_data.session_name != actual_session {
                     term_data.session_name = actual_session;
@@ -115,6 +134,14 @@ impl Workspace {
         this
     }
 
+    pub(crate) fn terminal_size(viewport: Size<Pixels>, font_size: f32) -> (u16, u16) {
+        let cell_w = font_size * (8.4 / 14.0);
+        let cell_h = font_size * (20.0 / 14.0);
+        let cols = ((f32::from(viewport.width) - 192.0 - 32.0) / cell_w).max(10.0) as u16;
+        let rows = ((f32::from(viewport.height) - 64.0 - 32.0) / cell_h).max(10.0) as u16;
+        (rows, cols)
+    }
+
     fn poll_git_branch(&mut self, cx: &mut Context<Self>) {
         let mut active_pid = None;
         let ws_idx = self.state.active_workspace;
@@ -136,31 +163,18 @@ impl Workspace {
                 async move {
                     let (branch, _cwd) = executor
                         .spawn(async move {
-                            let mut cwd = None;
-                            if let Some(pid) = active_pid
-                                && let Ok(output) = std::process::Command::new("lsof")
-                                    .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
-                                    .output()
-                            {
-                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                for line in stdout.lines() {
-                                    if let Some(stripped) = line.strip_prefix('n') {
-                                        cwd = Some(stripped.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-
-                            let mut branch = String::new();
-                            if let Some(ref c) = cwd
+                            let cwd = active_pid.and_then(process_cwd);
+                            let branch = if let Some(ref c) = cwd
                                 && let Ok(output) = std::process::Command::new("git")
                                     .args(["branch", "--show-current"])
                                     .current_dir(c)
                                     .output()
                             {
                                 let stdout = String::from_utf8_lossy(&output.stdout);
-                                branch = stdout.trim().to_string();
-                            }
+                                stdout.trim().to_string()
+                            } else {
+                                String::new()
+                            };
                             (branch, cwd)
                         })
                         .await;
@@ -465,14 +479,15 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn add_dir(&mut self, cx: &mut Context<Self>) {
+    pub fn add_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = std::env::current_dir()
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "Workspace".into());
 
         let cwd = self.get_active_terminal_cwd(cx);
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, cx));
+        let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
         let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
@@ -721,7 +736,7 @@ impl Workspace {
     pub fn handle_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.settings_open {
@@ -765,12 +780,12 @@ impl Workspace {
                     return;
                 }
                 "t" => {
-                    self.add_term(cx);
+                    self.add_term(window, cx);
                     cx.stop_propagation();
                     return;
                 }
                 "n" => {
-                    self.add_dir(cx);
+                    self.add_dir(window, cx);
                     cx.stop_propagation();
                     return;
                 }
@@ -1009,12 +1024,13 @@ impl Workspace {
         self.close_tab(self.state.active_workspace, idx, cx);
     }
 
-    pub fn add_term(&mut self, cx: &mut Context<Self>) {
+    pub fn add_term(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let ws_idx = self.state.active_workspace;
         let cwd = self.get_active_terminal_cwd(cx);
         let name = "Terminal".to_string();
 
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, cx));
+        let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
         let session_name = term.read(cx).session_name.clone();
 
