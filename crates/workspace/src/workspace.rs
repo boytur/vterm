@@ -7,7 +7,7 @@ use crate::state::AppState;
 use gpui::prelude::*;
 use gpui::*;
 
-use terminal::{PtyTerminal, TerminalColors};
+use terminal::PtyTerminal;
 use ui::{button::button, modal::modal_overlay, text_input::TextField};
 
 fn process_cwd(pid: u32) -> Option<String> {
@@ -87,11 +87,8 @@ impl Workspace {
             for term_data in &mut ws.terminals {
                 let cwd = term_data.cwd.clone();
                 let session_name = term_data.session_name.clone();
-                let colors =
-                    TerminalColors::new(state.theme.text_primary, state.theme.bg_main);
-                let term = cx.new(|cx| {
-                    PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx)
-                });
+                let term =
+                    cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, cx));
                 let actual_session = term.read(cx).session_name.clone();
                 if term_data.session_name != actual_session {
                     term_data.session_name = actual_session;
@@ -482,14 +479,6 @@ impl Workspace {
         self.state.theme_name = Some(theme_name);
         self.theme_menu_open = false;
         self.state.save().ok();
-        // Push the new colors to live terminals so OSC 10/11 probes from
-        // CLIs opened later report the current theme, not the spawn-time one.
-        let (fg, bg) = (self.state.theme.text_primary, self.state.theme.bg_main);
-        for terms in &self.terminals {
-            for term in terms {
-                term.update(cx, |term, _| term.colors.set(fg, bg));
-            }
-        }
         cx.notify();
     }
 
@@ -501,9 +490,7 @@ impl Workspace {
 
         let cwd = self.get_active_terminal_cwd(cx);
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
-        let colors = TerminalColors::new(self.state.theme.text_primary, self.state.theme.bg_main);
-        let term =
-            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
         let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
@@ -1042,9 +1029,7 @@ impl Workspace {
         let name = "Terminal".to_string();
 
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
-        let colors = TerminalColors::new(self.state.theme.text_primary, self.state.theme.bg_main);
-        let term =
-            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
         let session_name = term.read(cx).session_name.clone();
 

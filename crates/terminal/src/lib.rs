@@ -10,48 +10,12 @@ use vt100::Parser;
 
 const SCROLLBACK_LINES: usize = 10000;
 
-/// Foreground/background colors child apps should see, shared with the UI so
-/// theme switches apply to terminals that are already running. CLIs like
-/// codex/opencode probe these via OSC 10/11 to pick their own dark/light
-/// palette; without a reply they guess and render with mismatched colors.
-#[derive(Clone)]
-pub struct TerminalColors {
-    inner: Arc<Mutex<(gpui::Rgba, gpui::Rgba)>>,
-}
-
-impl TerminalColors {
-    pub fn new(fg: gpui::Rgba, bg: gpui::Rgba) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new((fg, bg))),
-        }
-    }
-
-    pub fn set(&self, fg: gpui::Rgba, bg: gpui::Rgba) {
-        *self.inner.lock().unwrap() = (fg, bg);
-    }
-
-    fn get(&self) -> (gpui::Rgba, gpui::Rgba) {
-        *self.inner.lock().unwrap()
-    }
-
-    fn colorfgbg(&self) -> String {
-        let (_, bg) = self.get();
-        let lum = 0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b;
-        if lum > 0.5 {
-            "0;15".to_string()
-        } else {
-            "15;0".to_string()
-        }
-    }
-}
-
 /// Re-exported so downstream UI crates can interpret cell colors without
 /// depending on the emulator directly.
 pub use vt100;
 
 pub struct PtyTerminal {
     pub parser: Arc<Mutex<Parser>>,
-    pub colors: TerminalColors,
     writer: Box<dyn Write + Send>,
     master: Option<Box<dyn MasterPty + Send>>,
     child: Option<Box<dyn Child + Send>>,
@@ -68,7 +32,6 @@ impl PtyTerminal {
         requested_session: Option<String>,
         rows: u16,
         cols: u16,
-        colors: TerminalColors,
         cx: &mut Context<Self>,
     ) -> Self {
         let parser = Arc::new(Mutex::new(Parser::new(rows, cols, SCROLLBACK_LINES)));
@@ -84,7 +47,7 @@ impl PtyTerminal {
             Ok(pair) => pair,
             Err(e) => {
                 eprintln!("vterm: failed to open pty: {e}");
-                return dead_terminal(parser, None, colors.clone());
+                return dead_terminal(parser, None);
             }
         };
 
@@ -119,15 +82,15 @@ impl PtyTerminal {
         // Finder/Dock), and CLIs downgrade to a reduced color palette.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
-        // Fallback signal for apps that don't query OSC 11: "fg;bg" palette
-        // indices advertising whether the terminal background is dark/light.
-        cmd.env("COLORFGBG", colors.colorfgbg());
+        // Deliberately NO COLORFGBG or color-query replies anywhere in
+        // vterm: CLIs like opencode/codex must keep their own default
+        // palette instead of adapting to the vterm theme.
 
         let child = match pair.slave.spawn_command(cmd) {
             Ok(child) => child,
             Err(e) => {
                 eprintln!("vterm: failed to spawn shell: {e}");
-                return dead_terminal(parser, session_name, colors.clone());
+                return dead_terminal(parser, session_name);
             }
         };
 
@@ -135,14 +98,14 @@ impl PtyTerminal {
             Ok(reader) => reader,
             Err(e) => {
                 eprintln!("vterm: failed to take reader: {e}");
-                return dead_terminal(parser, session_name, colors.clone());
+                return dead_terminal(parser, session_name);
             }
         };
         let writer = match pair.master.take_writer() {
             Ok(writer) => writer,
             Err(e) => {
                 eprintln!("vterm: failed to take writer: {e}");
-                return dead_terminal(parser, session_name, colors.clone());
+                return dead_terminal(parser, session_name);
             }
         };
 
@@ -166,7 +129,6 @@ impl PtyTerminal {
         cx.spawn(|this: WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let mut cx = cx.clone();
             let mut filter = AltScreenFilter::new();
-            let mut osc_scanner = OscQueryScanner::new();
             async move {
                 while let Ok(bytes) = rx.recv().await {
                     // Coalesce the whole queued burst into one parse pass so
@@ -176,17 +138,6 @@ impl PtyTerminal {
                     let mut batch = bytes;
                     while let Ok(next) = rx.try_recv() {
                         batch.extend_from_slice(&next);
-                    }
-                    // Answer OSC color queries before parsing: the vt100
-                    // parser swallows them, and CLIs like codex/opencode rely
-                    // on the reply to pick a matching dark/light palette.
-                    let queries = osc_scanner.feed(&batch);
-                    if !queries.is_empty()
-                        && this
-                            .update(&mut cx, |term, _| term.answer_color_queries(&queries))
-                            .is_err()
-                    {
-                        break;
                     }
                     {
                         let mut guard = parser_clone.lock().unwrap();
@@ -210,7 +161,6 @@ impl PtyTerminal {
 
         Self {
             parser,
-            colors,
             writer: Box::new(writer),
             master: Some(pair.master),
             child: Some(child),
@@ -238,21 +188,6 @@ impl PtyTerminal {
         // Any user input snaps the view back to the bottom, like real
         // terminals do when you start typing while scrolled up.
         self.parser.lock().unwrap().screen_mut().set_scrollback(0);
-    }
-
-    /// Replies to OSC 10/11 color queries with the current theme's default
-    /// foreground/background so child apps can match their palette to ours.
-    fn answer_color_queries(&mut self, codes: &[u8]) {
-        let (fg, bg) = self.colors.get();
-        for &code in codes {
-            let color = match code {
-                10 => fg,
-                11 => bg,
-                _ => continue,
-            };
-            // Bypass write() — a machine reply must not reset scrollback.
-            let _ = self.writer.write_all(&osc_color_response(code, color));
-        }
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -315,14 +250,9 @@ impl Drop for PtyTerminal {
     }
 }
 
-fn dead_terminal(
-    parser: Arc<Mutex<Parser>>,
-    session_name: Option<String>,
-    colors: TerminalColors,
-) -> PtyTerminal {
+fn dead_terminal(parser: Arc<Mutex<Parser>>, session_name: Option<String>) -> PtyTerminal {
     PtyTerminal {
         parser,
-        colors,
         writer: Box::new(std::io::sink()),
         master: None,
         child: None,
@@ -538,94 +468,6 @@ fn cleared_like(old: &mut Parser) -> Parser {
     fresh
 }
 
-/// Formats an OSC 10/11 query reply (`ESC ] <code> ; rgb:rrrr/gggg/bbbb ST`).
-/// Channels are scaled to 16 bits per the spec so apps don't lose precision.
-fn osc_color_response(code: u8, color: gpui::Rgba) -> Vec<u8> {
-    let channel = |v: f32| format!("{:04x}", (v.clamp(0.0, 1.0) * 65535.0).round() as u16);
-    format!(
-        "\x1b]{};rgb:{}/{}/{}\x1b\\",
-        code,
-        channel(color.r),
-        channel(color.g),
-        channel(color.b)
-    )
-    .into_bytes()
-}
-
-/// Spots OSC color queries (`ESC ] 10 ; ?` / `ESC ] 11 ; ?`, BEL- or ST-
-/// terminated) in the PTY output stream. The vt100 parser consumes these
-/// silently, so they have to be detected on the raw bytes to be answered.
-/// Queries may be split across read chunks, hence the carry-over tail.
-struct OscQueryScanner {
-    tail: Vec<u8>,
-}
-
-impl OscQueryScanner {
-    fn new() -> Self {
-        Self { tail: Vec::new() }
-    }
-
-    /// Returns the queried palette codes (10 = foreground, 11 = background).
-    fn feed(&mut self, chunk: &[u8]) -> Vec<u8> {
-        const MAX_OSC_LEN: usize = 40;
-        self.tail.extend_from_slice(chunk);
-        let mut queries = Vec::new();
-        let mut pos = 0;
-
-        loop {
-            match find_sub(&self.tail[pos..], b"\x1b]").map(|rel| rel + pos) {
-                None => {
-                    // Nothing pending except possibly a lone ESC that is the
-                    // first half of an introducer arriving in the next chunk.
-                    let keep = usize::from(self.tail.last() == Some(&0x1b));
-                    self.tail.drain(..self.tail.len() - keep);
-                    break;
-                }
-                Some(start) => match osc_terminator(&self.tail[start + 2..]) {
-                    None => {
-                        if self.tail.len() - (start + 2) > MAX_OSC_LEN {
-                            pos = start + 2; // malformed: resync past it
-                            continue;
-                        }
-                        self.tail.drain(..start); // wait for the terminator
-                        break;
-                    }
-                    Some((end_rel, term_len)) => {
-                        let params = &self.tail[start + 2..start + 2 + end_rel];
-                        match params {
-                            b"10;?" => queries.push(10),
-                            b"11;?" => queries.push(11),
-                            _ => {}
-                        }
-                        pos = start + 2 + end_rel + term_len;
-                    }
-                },
-            }
-        }
-        queries
-    }
-}
-
-fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if haystack.len() < needle.len() {
-        return None;
-    }
-    (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
-}
-
-/// Finds a BEL or ST terminator, returned as (offset, length).
-fn osc_terminator(buf: &[u8]) -> Option<(usize, usize)> {
-    let mut i = 0;
-    while i < buf.len() {
-        match buf[i] {
-            0x07 => return Some((i, 1)),
-            0x1b if buf.get(i + 1) == Some(&b'\\') => return Some((i, 2)),
-            _ => i += 1,
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,45 +589,5 @@ mod tests {
             })
             .collect();
         assert_eq!(row, "visible", "live contents survive the swap");
-    }
-
-    #[test]
-    fn osc_scanner_detects_queries_in_one_chunk() {
-        let mut s = OscQueryScanner::new();
-        assert_eq!(
-            s.feed(b"\x1b]11;?\x07some output\x1b]10;?\x1b\\"),
-            vec![11, 10]
-        );
-        assert_eq!(s.feed(b"more"), Vec::<u8>::new());
-    }
-
-    #[test]
-    fn osc_scanner_handles_split_sequences() {
-        let mut s = OscQueryScanner::new();
-        assert_eq!(s.feed(b"\x1b]11"), Vec::<u8>::new());
-        assert_eq!(s.feed(b";?\x1b\\"), vec![11]);
-        // A lone trailing ESC is carried into the next chunk.
-        assert_eq!(s.feed(b"ok\x1b"), Vec::<u8>::new());
-        assert_eq!(s.feed(b"]11;?\x07"), vec![11]);
-    }
-
-    #[test]
-    fn osc_scanner_ignores_set_commands_and_other_codes() {
-        let mut s = OscQueryScanner::new();
-        // Setting a color (no "?") is not a query.
-        assert_eq!(
-            s.feed(b"\x1b]11;rgb:0000/0000/0000\x1b\\"),
-            Vec::<u8>::new()
-        );
-        // OSC 4 palette queries are out of scope.
-        assert_eq!(s.feed(b"\x1b]4;1;?\x07"), Vec::<u8>::new());
-    }
-
-    #[test]
-    fn osc_color_response_format() {
-        let resp = String::from_utf8(osc_color_response(11, gpui::black().into())).unwrap();
-        assert_eq!(resp, "\x1b]11;rgb:0000/0000/0000\x1b\\");
-        let white = String::from_utf8(osc_color_response(10, gpui::white().into())).unwrap();
-        assert_eq!(white, "\x1b]10;rgb:ffff/ffff/ffff\x1b\\");
     }
 }
