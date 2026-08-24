@@ -44,8 +44,7 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
         
         let cell_w = font_size * (8.4 / 14.0);
         let cell_h = font_size * (20.0 / 14.0);
-        let expected_cols = ((f32::from(viewport.width) - 192.0 - 32.0) / cell_w).max(10.0) as u16;
-        let expected_rows = ((f32::from(viewport.height) - 64.0 - 32.0) / cell_h).max(10.0) as u16;
+        let (expected_rows, expected_cols) = Workspace::terminal_size(viewport, font_size);
         
         if expected_cols != cols_count || expected_rows != rows_count {
             let term_model = term_model.clone();
@@ -76,17 +75,19 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                 .absolute()
                 .top(px(16.0))
                 .bottom(px(16.0))
-                .right(px(4.0))
-                .w(px(6.0))
+                .right(px(2.0))
+                .w(px(8.0))
+                .rounded_full()
+                .bg(theme.border)
                 .child(
                     div()
                         .absolute()
                         .w_full()
                         .h(relative(thumb_h))
                         .top(relative(thumb_top))
-                        .bg(gpui::rgba(0x88888844))
-                        .hover(|s| s.bg(gpui::rgba(0x88888888)))
                         .rounded_full()
+                        .bg(theme.text_muted)
+                        .hover(|s| s.bg(theme.text_primary))
                 );
         }
 

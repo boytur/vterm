@@ -53,7 +53,7 @@ impl Theme {
     }
 
     pub fn builtins() -> [(&'static str, fn() -> Self); 27] {
-        [
+        let mut themes: [(&'static str, fn() -> Self); 27] = [
             ("light", Self::light),
             ("midnight", Self::midnight),
             ("ocean", Self::ocean),
@@ -81,7 +81,9 @@ impl Theme {
             ("monokai", Self::monokai),
             ("ayu_dark", Self::ayu_dark),
             ("github_dark", Self::github_dark),
-        ]
+        ];
+        themes.sort_by_key(|(name, _)| Self::display_name(name));
+        themes
     }
 
     pub fn display_name(name: &str) -> String {
@@ -437,7 +439,7 @@ impl Theme {
             text_muted: rgb(0x969696),
             accent: rgb(0x007fd4),
             ansi: [
-                rgb(0x1e1e1e),
+                rgb(0x000000),
                 rgb(0xf2495a),
                 rgb(0x2fb943),
                 rgb(0xe2b93d),
@@ -790,5 +792,13 @@ mod tests {
         assert!(themes.iter().any(|(name, _)| *name == "paper"));
         assert!(themes.iter().any(|(name, _)| *name == "vscode_abyss"));
         assert_eq!(Theme::display_name("vscode_dark_plus"), "VS Code Dark Plus");
+
+        let names: Vec<_> = themes
+            .iter()
+            .map(|(name, _)| Theme::display_name(name))
+            .collect();
+        let mut sorted_names = names.clone();
+        sorted_names.sort();
+        assert_eq!(names, sorted_names);
     }
 }

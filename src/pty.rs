@@ -21,15 +21,17 @@ impl PtyTerminal {
     pub fn new_with_cwd(
         cwd: Option<String>,
         requested_session: Option<String>,
+        rows: u16,
+        cols: u16,
         cx: &mut Context<Self>,
     ) -> Self {
-        let parser = Arc::new(Mutex::new(Parser::new(24, 80, 10000)));
+        let parser = Arc::new(Mutex::new(Parser::new(rows, cols, 10000)));
         let parser_clone = parser.clone();
 
         let pty_system = native_pty_system();
         let pair = match pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows,
+            cols,
             pixel_width: 0,
             pixel_height: 0,
         }) {
@@ -53,10 +55,13 @@ impl PtyTerminal {
             let name = requested_session
                 .filter(|name| valid_session_name(name))
                 .unwrap_or_else(new_session_name);
-            ensure_screen_session(&name, cwd.as_deref(), &shell);
             session_name = Some(name.clone());
             cmd = CommandBuilder::new("screen");
-            cmd.args(["-xRR", &name]);
+            if let Some(screen_target) = screen_socket(&name) {
+                cmd.args(["-A", "-xRR", &screen_target]);
+            } else {
+                cmd.args(["-S", &name, &shell, "-l"]);
+            }
             if let Some(cwd) = cwd.as_deref() {
                 cmd.cwd(cwd);
             }
@@ -226,26 +231,32 @@ fn valid_session_name(name: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 fn new_session_name() -> String {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    format!(
-        "vterm-{}-{}-{}",
-        std::process::id(),
-        SESSION_COUNTER.fetch_add(1, Ordering::Relaxed),
-        nonce
-    )
+    loop {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let name = format!(
+            "vterm-{}-{}-{}",
+            std::process::id(),
+            SESSION_COUNTER.fetch_add(1, Ordering::Relaxed),
+            nonce
+        );
+        if screen_socket(&name).is_none() {
+            return name;
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn ensure_screen_session(name: &str, cwd: Option<&str>, shell: &str) {
-    let mut command = std::process::Command::new("screen");
-    command.args(["-dmS", name, shell, "-l"]);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    command
-        .env("TERM", "xterm-256color")
-        .env("COLORTERM", "truecolor");
-    let _ = command.status();
+fn screen_socket(name: &str) -> Option<String> {
+    let output = std::process::Command::new("screen")
+        .arg("-ls")
+        .output()
+        .ok()?;
+    let suffix = format!(".{name}");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .find(|socket| socket.ends_with(&suffix))
+        .map(str::to_owned)
 }

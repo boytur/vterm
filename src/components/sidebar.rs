@@ -147,8 +147,8 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .border_color(theme.border)
                 .hover(|s| s.bg(theme.bg_tab_inactive))
                 .cursor_pointer()
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.add_dir(cx);
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.add_dir(window, cx);
                 }))
                 .flex()
                 .justify_center()
