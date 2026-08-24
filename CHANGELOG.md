@@ -4,6 +4,9 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-24
+
+
 - Enable GitHub Actions to create and approve pull requests so the release changelog automation works again.
 
 ## [0.3.1] - 2026-08-24
