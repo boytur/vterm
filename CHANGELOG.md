@@ -4,6 +4,17 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+- Reorder terminal tabs by dragging them, with an accent-colored insertion line showing exactly where the tab will be dropped.
+- Fix inverted scroll direction when using the trackpad or mouse wheel.
+- Hide the terminal cursor while viewing scrollback history.
+- Make `clear` actually wipe history instead of leaving it reachable by scrolling up.
+- Fix Cmd+A and other editing shortcuts being stolen by terminal shortcuts while a rename dialog is open.
+- Add `script/dev.sh` for auto rebuild-and-relaunch on save during development.
+- Add a real text field to rename dialogs with caret, arrow keys, selection, and Cmd+A/C/X/V editing support.
+- Make Cmd+A select the entire terminal screen so it can be copied with Cmd+C.
+- Smooth out typing and scrolling while commands produce heavy output by batching PTY data before repainting.
+- Fix scrollback not working when a command outputs more lines than fit on screen (e.g. `ls -la` in a large directory).
+- Snap the terminal view back to the bottom when typing while scrolled up.
 - Add copyable curl install commands to the landing page hero and install section.
 - Render release notes and release history on the landing page from the project changelog.
 - Redesign the landing page with responsive product-focused content, SEO metadata, and structured FAQ data.

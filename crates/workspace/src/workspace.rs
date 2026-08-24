@@ -7,8 +7,8 @@ use crate::state::AppState;
 use gpui::prelude::*;
 use gpui::*;
 
-use crate::pty::PtyTerminal;
-use crate::ui::{button::button, modal::modal_overlay};
+use terminal::{PtyTerminal, TerminalColors};
+use ui::{button::button, modal::modal_overlay, text_input::TextField};
 
 fn process_cwd(pid: u32) -> Option<String> {
     let child_pids = std::process::Command::new("pgrep")
@@ -44,9 +44,10 @@ pub struct Workspace {
     pub focus_handle: gpui::FocusHandle,
     pub terminals: Vec<Vec<Entity<PtyTerminal>>>,
     pub tab_context_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    pub tab_drop_target: Option<usize>,
     pub dir_context_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
-    pub renaming_tab_modal: Option<(usize, String)>,
-    pub renaming_dir_modal: Option<(usize, String)>,
+    pub renaming_tab_modal: Option<(usize, TextField)>,
+    pub renaming_dir_modal: Option<(usize, TextField)>,
     pub git_branch: String,
     pub git_branches: Vec<String>,
     pub theme_menu_open: bool,
@@ -57,7 +58,7 @@ pub struct Workspace {
     pub selection: Option<((u16, u16), (u16, u16))>,
     pub selecting: bool,
     pub toast: Option<String>,
-    pub update_info: Option<crate::update::UpdateInfo>,
+    pub update_info: Option<auto_update::UpdateInfo>,
     pub update_checking: bool,
     pub update_downloading: bool,
     pub update_download_progress: Option<f32>,
@@ -86,7 +87,11 @@ impl Workspace {
             for term_data in &mut ws.terminals {
                 let cwd = term_data.cwd.clone();
                 let session_name = term_data.session_name.clone();
-                let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, cx));
+                let colors =
+                    TerminalColors::new(state.theme.text_primary, state.theme.bg_main);
+                let term = cx.new(|cx| {
+                    PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx)
+                });
                 let actual_session = term.read(cx).session_name.clone();
                 if term_data.session_name != actual_session {
                     term_data.session_name = actual_session;
@@ -106,6 +111,7 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             terminals,
             tab_context_menu: None,
+            tab_drop_target: None,
             dir_context_menu: None,
             renaming_tab_modal: None,
             renaming_dir_modal: None,
@@ -237,7 +243,7 @@ impl Workspace {
                 let mut async_cx = cx.clone();
                 async move {
                     let result = executor
-                        .spawn(async { crate::update::check_for_update_detailed() })
+                        .spawn(async { auto_update::check_for_update_detailed() })
                         .await;
 
                     workspace
@@ -318,7 +324,7 @@ impl Workspace {
         self.state.save().map_err(|error| error.to_string())
     }
 
-    pub fn download_update(&mut self, info: crate::update::UpdateInfo, cx: &mut Context<Self>) {
+    pub fn download_update(&mut self, info: auto_update::UpdateInfo, cx: &mut Context<Self>) {
         if self.update_downloading || self.update_staged.is_some() || !info.can_auto_install {
             return;
         }
@@ -355,7 +361,7 @@ impl Workspace {
                 let mut async_cx = cx.clone();
                 async move {
                     let result = executor
-                        .spawn(async move { crate::update::download_update(&info, progress_tx) })
+                        .spawn(async move { auto_update::download_update(&info, progress_tx) })
                         .await;
 
                     workspace
@@ -403,7 +409,7 @@ impl Workspace {
                 let mut async_cx = cx.clone();
                 async move {
                     let result = executor
-                        .spawn(async move { crate::update::install_update(&staged_app) })
+                        .spawn(async move { auto_update::install_update(&staged_app) })
                         .await;
 
                     workspace
@@ -468,7 +474,7 @@ impl Workspace {
 
     pub fn set_theme(
         &mut self,
-        theme_fn: fn() -> crate::theme::Theme,
+        theme_fn: fn() -> theme::Theme,
         theme_name: String,
         cx: &mut Context<Self>,
     ) {
@@ -476,6 +482,14 @@ impl Workspace {
         self.state.theme_name = Some(theme_name);
         self.theme_menu_open = false;
         self.state.save().ok();
+        // Push the new colors to live terminals so OSC 10/11 probes from
+        // CLIs opened later report the current theme, not the spawn-time one.
+        let (fg, bg) = (self.state.theme.text_primary, self.state.theme.bg_main);
+        for terms in &self.terminals {
+            for term in terms {
+                term.update(cx, |term, _| term.colors.set(fg, bg));
+            }
+        }
         cx.notify();
     }
 
@@ -487,7 +501,9 @@ impl Workspace {
 
         let cwd = self.get_active_terminal_cwd(cx);
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
+        let colors = TerminalColors::new(self.state.theme.text_primary, self.state.theme.bg_main);
+        let term =
+            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
@@ -718,7 +734,9 @@ impl Workspace {
         let font_size = self.state.font_size;
         let cell_h = font_size * (20.0 / 14.0);
         let delta_pixels = event.delta.pixel_delta(px(font_size)).y;
-        let delta_lines = f32::from(delta_pixels) / cell_h;
+        // Multiply by 3 so a typical trackpad swipe scrolls several lines at a
+        // time rather than accumulating many tiny sub-line deltas.
+        let delta_lines = f32::from(delta_pixels) / cell_h * 3.0;
 
         if let Some(ws) = self.state.workspaces.get(ws_idx)
             && let Some(term_entity) = self
@@ -748,6 +766,55 @@ impl Workspace {
 
         let ws_idx = self.state.active_workspace;
 
+        // Open modals own every keystroke — including Cmd+A/C/X/V — before
+        // any global terminal shortcut gets a chance to fire.
+        if self.alert_modal.is_some() {
+            let key = event.keystroke.key.as_str();
+            if key == "enter" || key == "escape" {
+                self.alert_modal = None;
+                cx.notify();
+            }
+            cx.stop_propagation();
+            return;
+        }
+
+        if self.renaming_tab_modal.is_some() || self.renaming_dir_modal.is_some() {
+            let key = event.keystroke.key.as_str().to_string();
+            let modifiers = event.keystroke.modifiers;
+
+            match key.as_str() {
+                "enter" => {
+                    if let Some((idx, field)) = self.renaming_tab_modal.take() {
+                        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
+                            ws.terminals[idx].name = field.value().to_string();
+                            self.state.save().ok();
+                        }
+                    } else if let Some((idx, field)) = self.renaming_dir_modal.take() {
+                        if let Some(ws) = self.state.workspaces.get_mut(idx) {
+                            ws.name = field.value().to_string();
+                            self.state.save().ok();
+                        }
+                    }
+                }
+                "escape" => {
+                    self.renaming_tab_modal = None;
+                    self.renaming_dir_modal = None;
+                }
+                _ => {
+                    if let Some((_, field)) = self
+                        .renaming_tab_modal
+                        .as_mut()
+                        .or(self.renaming_dir_modal.as_mut())
+                    {
+                        field.key(&key, &modifiers, cx);
+                    }
+                }
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+
         if event.keystroke.modifiers.platform {
             match event.keystroke.key.as_str() {
                 "=" | "+" => {
@@ -766,6 +833,17 @@ impl Workspace {
                 }
                 "c" => {
                     self.copy_selection(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "a" => {
+                    // Select the entire visible screen, like Cmd+A in other
+                    // terminals; Cmd+C then copies it via selected_text().
+                    let (rows, cols) = self.active_screen_size(cx);
+                    if rows > 0 && cols > 0 {
+                        self.selection = Some(((0, 0), (cols - 1, rows - 1)));
+                        cx.notify();
+                    }
                     cx.stop_propagation();
                     return;
                 }
@@ -848,72 +926,6 @@ impl Workspace {
                     cx.stop_propagation();
                 }
             }
-        }
-
-        if self.alert_modal.is_some() {
-            let key = event.keystroke.key.as_str();
-            if key == "enter" || key == "escape" {
-                self.alert_modal = None;
-                cx.notify();
-            }
-            return;
-        }
-
-        if let Some((idx, mut current_name)) = self.renaming_tab_modal.clone() {
-            let key = event.keystroke.key.as_str();
-
-            if key == "enter" {
-                if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
-                    ws.terminals[idx].name = current_name;
-                    self.state.save().ok();
-                }
-                self.renaming_tab_modal = None;
-            } else if key == "escape" {
-                self.renaming_tab_modal = None;
-            } else if key == "backspace" {
-                current_name.pop();
-                self.renaming_tab_modal = Some((idx, current_name));
-            } else if key == "space" {
-                current_name.push(' ');
-                self.renaming_tab_modal = Some((idx, current_name));
-            } else if key.chars().count() == 1 {
-                if event.keystroke.modifiers.shift {
-                    current_name.push_str(&key.to_ascii_uppercase());
-                } else {
-                    current_name.push_str(key);
-                }
-                self.renaming_tab_modal = Some((idx, current_name));
-            }
-            cx.notify();
-            return;
-        }
-
-        if let Some((idx, mut current_name)) = self.renaming_dir_modal.clone() {
-            let key = event.keystroke.key.as_str();
-
-            if key == "enter" {
-                if let Some(ws) = self.state.workspaces.get_mut(idx) {
-                    ws.name = current_name;
-                    self.state.save().ok();
-                }
-                self.renaming_dir_modal = None;
-            } else if key == "escape" {
-                self.renaming_dir_modal = None;
-            } else if key == "backspace" {
-                current_name.pop();
-                self.renaming_dir_modal = Some((idx, current_name));
-            } else if key == "space" {
-                current_name.push(' ');
-                self.renaming_dir_modal = Some((idx, current_name));
-            } else if key.chars().count() == 1 {
-                if event.keystroke.modifiers.shift {
-                    current_name.push_str(&key.to_ascii_uppercase());
-                } else {
-                    current_name.push_str(key);
-                }
-                self.renaming_dir_modal = Some((idx, current_name));
-            }
-            cx.notify();
         }
     }
 
@@ -1030,7 +1042,9 @@ impl Workspace {
         let name = "Terminal".to_string();
 
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
+        let colors = TerminalColors::new(self.state.theme.text_primary, self.state.theme.bg_main);
+        let term =
+            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
         let session_name = term.read(cx).session_name.clone();
 
@@ -1052,14 +1066,14 @@ impl Workspace {
         if let Some(ws) = self.state.workspaces.get(ws_idx)
             && let Some(term) = ws.terminals.get(idx)
         {
-            self.renaming_tab_modal = Some((idx, term.name.clone()));
+            self.renaming_tab_modal = Some((idx, TextField::new(term.name.clone())));
             cx.notify();
         }
     }
 
     pub fn start_renaming_dir(&mut self, idx: usize, cx: &mut Context<Self>) {
         if let Some(ws) = self.state.workspaces.get(idx) {
-            self.renaming_dir_modal = Some((idx, ws.name.clone()));
+            self.renaming_dir_modal = Some((idx, TextField::new(ws.name.clone())));
             cx.notify();
         }
     }
@@ -1212,19 +1226,12 @@ impl Render for Workspace {
             );
         }
 
-        if let Some((idx, text)) = self.renaming_tab_modal.clone() {
+        if let Some((idx, field)) = self.renaming_tab_modal.clone() {
             root = root.child(modal_overlay(
                 theme,
                 "Rename Tab",
                 "Enter a custom name for this tab.",
-                div()
-                    .w_full()
-                    .p_2()
-                    .bg(theme.bg_tab_inactive)
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .child(format!("{}|", text)),
+                field.render(theme),
                 div()
                     .flex()
                     .w_full()
@@ -1242,7 +1249,7 @@ impl Render for Workspace {
                         cx.listener(move |this, _e, _w, cx| {
                             let ws_idx = this.state.active_workspace;
                             if let Some(ws) = this.state.workspaces.get_mut(ws_idx) {
-                                ws.terminals[idx].name = text.clone();
+                                ws.terminals[idx].name = field.value().to_string();
                                 this.state.save().ok();
                             }
                             this.renaming_tab_modal = None;
@@ -1323,10 +1330,10 @@ impl Render for Workspace {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
 
-            for (name, func) in crate::theme::Theme::builtins() {
+            for (name, func) in theme::Theme::builtins() {
                 let n = name.to_string();
                 let is_active = self.state.theme_name.as_deref() == Some(name);
-                let display_name = crate::theme::Theme::display_name(name);
+                let display_name = theme::Theme::display_name(name);
 
                 list = list.child(
                     div()
@@ -1352,19 +1359,12 @@ impl Render for Workspace {
             root = root.child(list);
         }
 
-        if let Some((idx, text)) = self.renaming_dir_modal.clone() {
+        if let Some((idx, field)) = self.renaming_dir_modal.clone() {
             root = root.child(modal_overlay(
                 theme,
                 "Rename Workspace",
                 "Enter a custom name for this workspace.",
-                div()
-                    .w_full()
-                    .p_2()
-                    .bg(theme.bg_tab_inactive)
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .child(format!("{}|", text)),
+                field.render(theme),
                 div()
                     .flex()
                     .w_full()
@@ -1381,7 +1381,7 @@ impl Render for Workspace {
                         MouseButton::Left,
                         cx.listener(move |this, _e, _w, cx| {
                             if let Some(ws) = this.state.workspaces.get_mut(idx) {
-                                ws.name = text.clone();
+                                ws.name = field.value().to_string();
                                 this.state.save().ok();
                             }
                             this.renaming_dir_modal = None;

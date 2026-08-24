@@ -434,6 +434,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "auto_update"
+version = "0.2.4"
+dependencies = [
+ "async-channel 2.5.0",
+ "semver",
+ "serde",
+ "ureq",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5597,12 +5607,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal"
+version = "0.2.4"
+dependencies = [
+ "async-channel 2.5.0",
+ "criterion",
+ "gpui",
+ "portable-pty",
+ "vt100",
+]
+
+[[package]]
 name = "termios"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5d9cf598a6d7ce700a4e6a9199da127e6819a61e64b68609683cc9a01b5683a"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "theme"
+version = "0.2.4"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]
@@ -5980,6 +6008,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ui"
+version = "0.2.4"
+dependencies = [
+ "gpui",
+ "theme",
+]
+
+[[package]]
 name = "unicase"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6244,16 +6280,8 @@ dependencies = [
 name = "vterm"
 version = "0.2.4"
 dependencies = [
- "async-channel 2.5.0",
- "criterion",
- "dirs 6.0.0",
  "gpui",
- "portable-pty",
- "semver",
- "serde",
- "serde_json",
- "ureq",
- "vt100",
+ "workspace",
 ]
 
 [[package]]
@@ -7041,6 +7069,21 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "workspace"
+version = "0.2.4"
+dependencies = [
+ "async-channel 2.5.0",
+ "auto_update",
+ "dirs 6.0.0",
+ "gpui",
+ "serde",
+ "serde_json",
+ "terminal",
+ "theme",
+ "ui",
+]
 
 [[package]]
 name = "writeable"

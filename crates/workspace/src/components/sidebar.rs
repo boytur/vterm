@@ -1,7 +1,7 @@
-use crate::theme::Theme;
 use crate::workspace::Workspace;
 use gpui::prelude::*;
 use gpui::*;
+use theme::Theme;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct DragDir(pub usize);

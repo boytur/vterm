@@ -1,4 +1,4 @@
-use crate::theme::Theme;
+use theme::Theme;
 use gpui::*;
 
 pub fn modal_overlay(

@@ -1,18 +1,30 @@
-use gpui::*;
 use crate::workspace::Workspace;
+use gpui::*;
 
-fn vt100_color_to_gpui(color: &vt100::Color, default_color: Hsla, _is_fg: bool, theme: &crate::theme::Theme) -> Hsla {
+// Fixed xterm-standard palette. Deliberately NOT derived from the app theme:
+// recoloring these per-theme makes CLI tools (codex, opencode, vim, etc.)
+// render with mismatched colors whenever the user switches themes.
+const STANDARD_ANSI: [u32; 16] = [
+    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, //
+    0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+];
+
+fn vt100_color_to_gpui(color: &terminal::vt100::Color, default_color: Hsla) -> Hsla {
     match color {
-        vt100::Color::Default => default_color,
-        vt100::Color::Rgb(r, g, b) => gpui::rgb((*r as u32) << 16 | (*g as u32) << 8 | (*b as u32)).into(),
-        vt100::Color::Idx(idx) => {
+        terminal::vt100::Color::Default => default_color,
+        terminal::vt100::Color::Rgb(r, g, b) => {
+            gpui::rgb((*r as u32) << 16 | (*g as u32) << 8 | (*b as u32)).into()
+        }
+        terminal::vt100::Color::Idx(idx) => {
             match idx {
-                0..=15 => theme.ansi[*idx as usize].into(),
+                0..=15 => gpui::rgb(STANDARD_ANSI[*idx as usize]).into(),
                 16..=231 => {
                     // 216 colors
                     let mut i = *idx - 16;
-                    let b = (i % 6) * 51; i /= 6;
-                    let g = (i % 6) * 51; i /= 6;
+                    let b = (i % 6) * 51;
+                    i /= 6;
+                    let g = (i % 6) * 51;
+                    i /= 6;
                     let r = (i % 6) * 51;
                     gpui::rgb((r as u32) << 16 | (g as u32) << 8 | (b as u32)).into()
                 }
@@ -26,7 +38,12 @@ fn vt100_color_to_gpui(color: &vt100::Color, default_color: Hsla, _is_fg: bool, 
     }
 }
 
-pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &mut Context<Workspace>, viewport: gpui::Size<gpui::Pixels>) -> impl IntoElement {
+pub fn render_terminal_view(
+    workspace: &Workspace,
+    _window: &gpui::Window,
+    cx: &mut Context<Workspace>,
+    viewport: gpui::Size<gpui::Pixels>,
+) -> impl IntoElement {
     let theme = &workspace.state.theme;
     let font_size = workspace.state.font_size;
 
@@ -34,18 +51,25 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
     let mut selection_overlay = div();
     let mut scrollbar_element = div();
 
-    if let Some(ws) = workspace.state.workspaces.get(workspace.state.active_workspace)
-        && let Some(term_model) = workspace.terminals.get(workspace.state.active_workspace).and_then(|t| t.get(ws.active_term)) {
-            let (rows_count, cols_count) = {
-                let term = term_model.read(cx);
+    if let Some(ws) = workspace
+        .state
+        .workspaces
+        .get(workspace.state.active_workspace)
+        && let Some(term_model) = workspace
+            .terminals
+            .get(workspace.state.active_workspace)
+            .and_then(|t| t.get(ws.active_term))
+    {
+        let (rows_count, cols_count) = {
+            let term = term_model.read(cx);
             let parser = term.parser.lock().unwrap();
             parser.screen().size()
         };
-        
+
         let cell_w = font_size * (8.4 / 14.0);
         let cell_h = font_size * (20.0 / 14.0);
         let (expected_rows, expected_cols) = Workspace::terminal_size(viewport, font_size);
-        
+
         if expected_cols != cols_count || expected_rows != rows_count {
             let term_model = term_model.clone();
             cx.defer(move |app| {
@@ -55,7 +79,7 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                 });
             });
         }
-        
+
         let term = term_model.read(cx);
         let parser = term.parser.lock().unwrap();
         let screen = parser.screen();
@@ -63,6 +87,9 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
         drop(parser); // release lock so we can call scroll_info on term_model
 
         let (current_offset, max_offset) = term_model.read(cx).scroll_info();
+        // The live cursor only exists on the bottom view; while scrolled into
+        // history it would highlight an arbitrary historical cell.
+        let show_cursor = current_offset == 0;
         if max_offset > 0 {
             let total_lines = max_offset as f32 + rows_count as f32;
             let visible_ratio = rows_count as f32 / total_lines;
@@ -87,7 +114,7 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                         .top(relative(thumb_top))
                         .rounded_full()
                         .bg(theme.text_muted)
-                        .hover(|s| s.bg(theme.text_primary))
+                        .hover(|s| s.bg(theme.text_primary)),
                 );
         }
 
@@ -119,34 +146,46 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
             }
             selection_overlay = div().absolute().inset_0().children(rects);
         }
-        
+
         for r in 0..rows_count {
             let mut line_children = Vec::new();
-            
+
             let mut current_text = String::new();
-            let mut current_fg = vt100::Color::Default;
-            let mut current_bg = vt100::Color::Default;
+            let mut current_fg = terminal::vt100::Color::Default;
+            let mut current_bg = terminal::vt100::Color::Default;
             let mut current_bold = false;
             let mut current_inverse = false;
-            
-            let mut flush = |text: &mut String, fg: vt100::Color, bg: vt100::Color, bold: bool, inv: bool| {
+
+            let mut flush = |text: &mut String,
+                             fg: terminal::vt100::Color,
+                             bg: terminal::vt100::Color,
+                             bold: bool,
+                             inv: bool| {
                 if !text.is_empty() {
-                    let fg_base = vt100_color_to_gpui(&fg, theme.text_primary.into(), true, theme);
-                    let bg_base = vt100_color_to_gpui(&bg, gpui::transparent_black(), false, theme);
+                    let fg_base = vt100_color_to_gpui(&fg, theme.text_primary.into());
+                    let bg_base = vt100_color_to_gpui(&bg, gpui::transparent_black());
 
                     let (final_fg, final_bg) = if inv {
-                        let inv_fg = if bg == vt100::Color::Default { theme.bg_main.into() } else { bg_base };
-                        let inv_bg = if fg == vt100::Color::Default { theme.text_primary.into() } else { fg_base };
+                        let inv_fg = if bg == terminal::vt100::Color::Default {
+                            theme.bg_main.into()
+                        } else {
+                            bg_base
+                        };
+                        let inv_bg = if fg == terminal::vt100::Color::Default {
+                            theme.text_primary.into()
+                        } else {
+                            fg_base
+                        };
                         (inv_fg, inv_bg)
                     } else {
                         (fg_base, bg_base)
                     };
-                    
+
                     let mut remaining = text.as_str();
                     while !remaining.is_empty() {
                         let http_idx = remaining.find("http://");
                         let https_idx = remaining.find("https://");
-                        
+
                         let idx = match (http_idx, https_idx) {
                             (Some(i), Some(j)) => Some(i.min(j)),
                             (Some(i), None) => Some(i),
@@ -155,12 +194,10 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                         };
 
                         let create_el = || {
-                            let mut base = div().whitespace_nowrap().text_color(final_fg).px(px(0.5));
-                            if bg != vt100::Color::Default || inv {
+                            let mut base =
+                                div().whitespace_nowrap().text_color(final_fg).px(px(0.5));
+                            if bg != terminal::vt100::Color::Default || inv {
                                 base = base.bg(final_bg);
-                            }
-                            if bold && !inv {
-                                base = base.text_color(vt100_color_to_gpui(&fg, gpui::white(), true, theme));
                             }
                             if bold {
                                 base = base.font_weight(gpui::FontWeight::BOLD);
@@ -173,11 +210,19 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                                 line_children.push(create_el().child(remaining[..i].to_string()));
                             }
                             let url_start = &remaining[i..];
-                            let end_idx = url_start.find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ')' || c == ']' || c == '>')
+                            let end_idx = url_start
+                                .find(|c: char| {
+                                    c.is_whitespace()
+                                        || c == '"'
+                                        || c == '\''
+                                        || c == ')'
+                                        || c == ']'
+                                        || c == '>'
+                                })
                                 .unwrap_or(url_start.len());
                             let url = &url_start[..end_idx];
                             let url_string = url.to_string();
-                            
+
                             line_children.push(
                                 create_el()
                                     .text_color(gpui::rgba(0x4488FFFF))
@@ -186,7 +231,7 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                                     .on_mouse_down(gpui::MouseButton::Left, move |_e, _w, cx| {
                                         cx.open_url(&url_string);
                                     })
-                                    .child(url.to_string())
+                                    .child(url.to_string()),
                             );
                             remaining = &url_start[end_idx..];
                         } else {
@@ -199,42 +244,71 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
             };
 
             for c in 0..cols_count {
-                let is_cursor = cursor.0 == r && cursor.1 == c && !screen.hide_cursor();
-                
+                let is_cursor =
+                    show_cursor && cursor.0 == r && cursor.1 == c && !screen.hide_cursor();
+
                 let (fg, bg, bold, mut inv, contents) = match screen.cell(r, c) {
                     Some(cell) => {
-                        let text = if cell.has_contents() { 
+                        let text = if cell.has_contents() {
                             let c_text = cell.contents();
                             if c_text.is_empty() {
                                 "\u{00A0}".to_string()
                             } else {
                                 c_text.replace(" ", "\u{00A0}")
                             }
-                        } else { 
-                            "\u{00A0}".to_string() 
+                        } else {
+                            "\u{00A0}".to_string()
                         };
-                        (cell.fgcolor(), cell.bgcolor(), cell.bold(), cell.inverse(), text)
+                        (
+                            cell.fgcolor(),
+                            cell.bgcolor(),
+                            cell.bold(),
+                            cell.inverse(),
+                            text,
+                        )
                     }
-                    None => (vt100::Color::Default, vt100::Color::Default, false, false, "\u{00A0}".to_string()),
+                    None => (
+                        terminal::vt100::Color::Default,
+                        terminal::vt100::Color::Default,
+                        false,
+                        false,
+                        "\u{00A0}".to_string(),
+                    ),
                 };
-                
+
                 if is_cursor {
                     inv = !inv;
                 }
-                
-                if fg != current_fg || bg != current_bg || bold != current_bold || inv != current_inverse {
-                    flush(&mut current_text, current_fg, current_bg, current_bold, current_inverse);
+
+                if fg != current_fg
+                    || bg != current_bg
+                    || bold != current_bold
+                    || inv != current_inverse
+                {
+                    flush(
+                        &mut current_text,
+                        current_fg,
+                        current_bg,
+                        current_bold,
+                        current_inverse,
+                    );
                     current_fg = fg;
                     current_bg = bg;
                     current_bold = bold;
                     current_inverse = inv;
                 }
-                
+
                 current_text.push_str(&contents);
             }
-            
-            flush(&mut current_text, current_fg, current_bg, current_bold, current_inverse);
-            
+
+            flush(
+                &mut current_text,
+                current_fg,
+                current_bg,
+                current_bold,
+                current_inverse,
+            );
+
             lines_elements.push(
                 div()
                     .flex()
@@ -242,7 +316,7 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
                     .items_start()
                     .pt(px(3.0))
                     .h(px(cell_h))
-                    .children(line_children)
+                    .children(line_children),
             );
         }
     }
@@ -259,11 +333,23 @@ pub fn render_terminal_view(workspace: &Workspace, _window: &gpui::Window, cx: &
         .text_size(px(font_size))
         .line_height(relative(20.0 / 14.0))
         .overflow_hidden()
-        .on_mouse_down(gpui::MouseButton::Left, cx.listener(Workspace::on_terminal_mouse_down))
-        .on_mouse_down(gpui::MouseButton::Right, cx.listener(Workspace::on_terminal_mouse_down))
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(Workspace::on_terminal_mouse_down),
+        )
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(Workspace::on_terminal_mouse_down),
+        )
         .on_mouse_move(cx.listener(Workspace::on_terminal_mouse_move))
-        .on_mouse_up(gpui::MouseButton::Left, cx.listener(Workspace::on_terminal_mouse_up))
-        .on_mouse_up(gpui::MouseButton::Right, cx.listener(Workspace::on_terminal_mouse_up))
+        .on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(Workspace::on_terminal_mouse_up),
+        )
+        .on_mouse_up(
+            gpui::MouseButton::Right,
+            cx.listener(Workspace::on_terminal_mouse_up),
+        )
         .on_scroll_wheel(cx.listener(Workspace::on_terminal_scroll_wheel))
         .child(selection_overlay)
         .children(lines_elements)
