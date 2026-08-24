@@ -718,7 +718,9 @@ impl Workspace {
         let font_size = self.state.font_size;
         let cell_h = font_size * (20.0 / 14.0);
         let delta_pixels = event.delta.pixel_delta(px(font_size)).y;
-        let delta_lines = f32::from(delta_pixels) / cell_h;
+        // Multiply by 3 so a typical trackpad swipe scrolls several lines at a
+        // time rather than accumulating many tiny sub-line deltas.
+        let delta_lines = f32::from(delta_pixels) / cell_h * 3.0;
 
         if let Some(ws) = self.state.workspaces.get(ws_idx)
             && let Some(term_entity) = self

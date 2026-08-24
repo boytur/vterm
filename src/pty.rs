@@ -15,6 +15,9 @@ pub struct PtyTerminal {
     child: Option<Box<dyn Child + Send>>,
     pub child_pid: Option<u32>,
     pub session_name: Option<String>,
+    /// Accumulates fractional scroll lines from trackpad events so that small
+    /// deltas aren't silently truncated to zero.
+    scroll_accumulator: f32,
 }
 
 impl PtyTerminal {
@@ -132,6 +135,7 @@ impl PtyTerminal {
             child: Some(child),
             child_pid,
             session_name,
+            scroll_accumulator: 0.0,
         }
     }
 
@@ -169,13 +173,23 @@ impl PtyTerminal {
     }
 
     pub fn scroll(&mut self, delta_lines: f32) {
+        // Accumulate fractional scroll so that small trackpad deltas aren't lost.
+        self.scroll_accumulator += delta_lines;
+
+        // Extract whole lines from the accumulator.
+        let whole_lines = self.scroll_accumulator.trunc() as i32;
+        if whole_lines == 0 {
+            return;
+        }
+        self.scroll_accumulator -= whole_lines as f32;
+
         let mut parser = self.parser.lock().unwrap();
         let current_offset = parser.screen().scrollback();
 
-        let new_offset = if delta_lines < 0.0 {
-            current_offset.saturating_add((-delta_lines) as usize)
+        let new_offset = if whole_lines < 0 {
+            current_offset.saturating_add((-whole_lines) as usize)
         } else {
-            current_offset.saturating_sub(delta_lines as usize)
+            current_offset.saturating_sub(whole_lines as usize)
         };
 
         parser.screen_mut().set_scrollback(new_offset);
@@ -207,6 +221,7 @@ fn dead_terminal(parser: Arc<Mutex<Parser>>, session_name: Option<String>) -> Pt
         child: None,
         child_pid: None,
         session_name,
+        scroll_accumulator: 0.0,
     }
 }
 
