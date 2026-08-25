@@ -10,6 +10,8 @@ All notable changes to vterm are documented here.
 - Widen the workspace sidebar (192px → 256px) and truncate long workspace names with an ellipsis instead of overflowing or shrinking the delete button.
 - Cap the title-bar git branch name at 240px and ellipsis-truncate it when longer, so long branch names no longer push into the Theme/Settings buttons.
 - Add a full-window backdrop behind the branch dropdown so opening it no longer lets clicks/hover fall through to the terminal or title bar in the background (outside clicks now just close the menu). The dropdown now behaves as a true modal — only the branch box is interactive while it's open. The backdrop also captures mouse-move and shows a default cursor so background hover (tabs/terminal) is suppressed while the modal is open.
+- Suppress hover highlighting on the background UI (terminal tabs, sidebar workspaces, title-bar Theme/Settings buttons) while the branch or theme modal is open, so the underlying elements no longer light up where the dropdown overlaps them.
+- Add a vterm app logo (terminal glyph) to the left of the git-branch icon inside the title-bar branch button.
 - Terminal panes now follow the app theme: background, foreground, and the ANSI 0–15 palette are injected from the selected theme and apply live — including to terminals that are already running.
 - Swap the terminal emulator core from `vt100` to `alacritty_terminal` (the same core Zed embeds), so apps like opencode and codex run against a battle-tested xterm implementation.
 - Answer OSC 10/11/4 color queries from the emulator itself at query time, replying with the exact colors the pane renders — opencode now detects the dark background on startup and picks its dark theme instead of a broken fallback.

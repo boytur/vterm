@@ -29,6 +29,7 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
     let theme = &workspace.state.theme;
     let dir_drop_target = workspace.dir_drop_target;
     let dir_count = workspace.state.workspaces.len();
+    let modal_open = workspace.branch_menu_open || workspace.theme_menu_open;
 
     div()
         .w_64()
@@ -87,7 +88,7 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                 .justify_between()
                                 .items_center()
                                 .text_color(theme.text_primary)
-                                .when(!show_indicator, |el| {
+                                .when(!show_indicator && !modal_open, |el| {
                                     el.hover(|s| s.bg(theme.bg_tab_inactive))
                                 })
                                 .cursor_pointer()
@@ -160,8 +161,11 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                         .items_center()
                                         .rounded_full()
                                         .text_color(theme.text_muted)
-                                        .hover(|s| {
-                                            s.bg(theme.bg_tab_inactive).text_color(theme.ansi[1])
+                                        .when(!modal_open, |el| {
+                                            el.hover(|s| {
+                                                s.bg(theme.bg_tab_inactive)
+                                                    .text_color(theme.ansi[1])
+                                            })
                                         })
                                         .on_click(cx.listener(
                                             move |this, _event: &gpui::ClickEvent, _window, cx| {
@@ -201,7 +205,7 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 } else {
                     theme.bg_sidebar
                 })
-                .when(dir_drop_target != Some(dir_count), |el| {
+                .when(dir_drop_target != Some(dir_count) && !modal_open, |el| {
                     el.hover(|s| s.bg(theme.bg_tab_inactive))
                 })
                 .cursor_pointer()

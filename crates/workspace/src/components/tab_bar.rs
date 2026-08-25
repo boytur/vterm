@@ -27,6 +27,7 @@ impl Render for DragPreview {
 pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> impl IntoElement {
     let theme = &workspace.state.theme;
     let drop_target = workspace.tab_drop_target;
+    let modal_open = workspace.branch_menu_open || workspace.theme_menu_open;
     let tab_count = workspace.state.workspaces[workspace.state.active_workspace]
         .terminals
         .len();
@@ -88,7 +89,7 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                         .border_t_2()
                         .border_color(border)
                         .text_color(text_col)
-                        .when(!show_indicator, |el| {
+                        .when(!show_indicator && !modal_open, |el| {
                             el.hover(|s| s.bg(theme.bg_tab_inactive))
                         })
                         .cursor_pointer()
@@ -155,11 +156,13 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                         .flex()
                                         .justify_center()
                                         .items_center()
-                                        .rounded_full()
-                                        .text_color(theme.text_muted)
-                                        .hover(|s| {
-                                            s.bg(theme.bg_tab_inactive).text_color(theme.ansi[1])
-                                        })
+                                .rounded_full()
+                                .text_color(theme.text_muted)
+                                .when(!modal_open, |el| {
+                                    el.hover(|s| {
+                                        s.bg(theme.bg_tab_inactive).text_color(theme.ansi[1])
+                                    })
+                                })
                                         .on_click(cx.listener(
                                             move |this, _event: &gpui::ClickEvent, _window, cx| {
                                                 this.delete_term(i, cx);
@@ -190,7 +193,7 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .flex()
                 .items_center()
                 .text_color(theme.text_muted)
-                .when(drop_target != Some(tab_count), |el| {
+                .when(drop_target != Some(tab_count) && !modal_open, |el| {
                     el.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
                 })
                 .cursor_pointer()

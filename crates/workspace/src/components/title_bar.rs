@@ -4,6 +4,7 @@ use gpui::*;
 
 pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> impl IntoElement {
     let theme = &workspace.state.theme;
+    let modal_open = workspace.branch_menu_open || workspace.theme_menu_open;
 
     // Get active workspace name
     let ws_name = workspace
@@ -36,13 +37,30 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
             } else {
                 gpui::rgba(0x00000000)
             })
-            .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+            .when(!modal_open, |el| {
+                el.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 _cx.listener(|this, _e, _w, cx| {
                     cx.stop_propagation();
                     this.toggle_branch_menu(cx);
                 }),
+            )
+            .child(
+                div()
+                    .w(px(14.0))
+                    .h(px(14.0))
+                    .child(
+                        gpui::svg()
+                            .path("icons/vterm_logo.svg")
+                            .text_color(if workspace.branch_menu_open {
+                                theme.text_primary
+                            } else {
+                                theme.accent
+                            })
+                            .size(px(14.0)),
+                    ),
             )
             .child(
                 div()
@@ -123,7 +141,9 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                         })
                         .text_size(px(12.0))
                         .cursor_pointer()
-                        .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+                        .when(!modal_open, |el| {
+                            el.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             _cx.listener(|this, _e, _w, cx| {
