@@ -14,7 +14,7 @@ pub struct DragDirPreview {
 impl Render for DragDirPreview {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .w_48()
+            .w_64()
             .bg(self.theme.bg_tab_active)
             .border_1()
             .border_color(self.theme.border)
@@ -31,7 +31,7 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
     let dir_count = workspace.state.workspaces.len();
 
     div()
-        .w_48()
+        .w_64()
         .h_full()
         .bg(theme.bg_sidebar)
         .border_r_1()
@@ -141,10 +141,17 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                 .on_click(cx.listener(move |this, _event, _window, cx| {
                                     this.select_dir(i, cx);
                                 }))
-                                .child(ws.name.clone())
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(ws.name.clone()),
+                                )
                                 .child(
                                     div()
                                         .id(("del-dir", i))
+                                        .flex_shrink_0()
                                         .p_0()
                                         .w(px(16.0))
                                         .h(px(16.0))
