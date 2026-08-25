@@ -227,6 +227,7 @@ impl TextField {
 
         div()
             .w_full()
+            .h(px(34.0))
             .p_2()
             .pl(px(self.left_pad))
             .bg(theme.bg_tab_inactive)

@@ -15,6 +15,7 @@ All notable changes to vterm are documented here.
 - Add a search box to the Local Branches dropdown to filter branches as you type; Enter checks out the first match, Esc closes, and "No branches found" shows when the filter matches nothing. The search box now has a magnifier icon *inside* the input (text indented via a `left_pad`), a blinking caret, and the placeholder sits at the top of the box.
 - Title bar: only empty header space now starts a window move — the branch/theme/Settings buttons no longer trigger a window move (the move handler was moved to a drag layer behind the buttons).
 - Opening the Local Branches dropdown now focuses the window so you can type to search immediately (previously the terminal kept focus and the first keystrokes were lost until you clicked the search box).
+- The search input now has a fixed height (34px) so it no longer grows by a few pixels when you start typing (was sizing to the caret vs. the text line).
 - Terminal panes now follow the app theme: background, foreground, and the ANSI 0–15 palette are injected from the selected theme and apply live — including to terminals that are already running.
 - Swap the terminal emulator core from `vt100` to `alacritty_terminal` (the same core Zed embeds), so apps like opencode and codex run against a battle-tested xterm implementation.
 - Answer OSC 10/11/4 color queries from the emulator itself at query time, replying with the exact colors the pane renders — opencode now detects the dark background on startup and picks its dark theme instead of a broken fallback.
