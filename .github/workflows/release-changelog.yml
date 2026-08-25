@@ -88,7 +88,7 @@ jobs:
         if: steps.release.outputs.tag != ''
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           base: master
           branch: chore/release-${{ steps.release.outputs.tag }}
           delete-branch: true
@@ -103,6 +103,6 @@ jobs:
       - name: Enable changelog pull request auto-merge
         if: steps.changelog-pr.outputs.pull-request-number != ''
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.changelog-pr.outputs.pull-request-number }}
         run: gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --auto --delete-branch

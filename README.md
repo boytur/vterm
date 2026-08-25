@@ -82,9 +82,10 @@ least one bullet. When a `v*` tag is pushed, the release workflow uses those
 entries as GitHub Release notes, opens a changelog PR, and enables auto-merge so
 the versioned changelog lands on `master` after required checks pass.
 For this to work automatically, enable **Allow GitHub Actions to create and
-approve pull requests** in Settings → Actions → General → Workflow permissions
-and configure `RELEASE_TOKEN` with contents and pull-request write access. The
-workflow falls back to `GITHUB_TOKEN` when that secret is unavailable.
+approve pull requests** in Settings → Actions → General → Workflow permissions.
+The release changelog workflow uses its scoped `GITHUB_TOKEN` to create and
+merge the generated PR. `RELEASE_TOKEN` is only needed when the version-bump
+workflow must push a tag that starts CD.
 
 ## CI / CD
 
