@@ -204,6 +204,7 @@ impl TextField {
                 div()
                     .w(px(1.5))
                     .h(px(14.0))
+                    .mt(px(0.5))
                     .flex_shrink_0()
                     .bg(theme.text_primary)
                     .with_animation(
