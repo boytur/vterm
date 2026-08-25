@@ -4,6 +4,7 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+- Fix terminal text selection: the selection highlight, IME underline, and cursor anchor now line up exactly with the glyphs under the cursor. The bug came from stale layout constants (sidebar/title-bar/tab-bar sizes) in the mouse→cell mapping plus a per-run text padding that drifted glyphs off the cell grid; clicking now selects the character you actually click.
 - Highlight the destination tab with the accent color (background tint + border) while dragging a tab to reorder, so the drop target is clearly visible instead of the previous near-invisible 2px bar.
 - Apply the same drag-reorder drop-target highlight to the workspace sidebar: the destination workspace (and the + Add Workspace button) now show an accent background tint + border while dragging.
 - Drop the always-on border on sidebar workspace items (and inactive tabs) in the normal state — borders now appear only for the active item or the drag drop target.
