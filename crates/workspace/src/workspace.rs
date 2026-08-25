@@ -67,6 +67,19 @@ pub struct Workspace {
     pub update_installing: bool,
     pub update_error: Option<String>,
     pub ime_composition: String,
+    /// Theme-derived palette injected into every terminal: OSC query
+    /// replies and cell rendering both read from it, so they stay in sync.
+    pub terminal_colors: terminal::TerminalColors,
+}
+
+/// Maps the app theme onto the terminal surface.
+fn theme_terminal_colors(t: &theme::Theme) -> terminal::TerminalColors {
+    let channel = |v: f32| (v * 255.0).round() as u8;
+    let channels = |c: gpui::Rgba| [channel(c.r), channel(c.g), channel(c.b)];
+    let fg = channels(t.text_primary);
+    let bg = channels(t.bg_main);
+    let ansi = t.ansi.map(channels);
+    terminal::TerminalColors::new(fg, bg, ansi)
 }
 
 impl Workspace {
@@ -83,14 +96,16 @@ impl Workspace {
         let mut state = AppState::new();
         let (rows, cols) = Self::terminal_size(window.viewport_size(), state.font_size);
         let mut state_changed = false;
+        let terminal_colors = theme_terminal_colors(&state.theme);
         let mut terminals = Vec::new();
         for ws in &mut state.workspaces {
             let mut ws_terms = Vec::new();
             for term_data in &mut ws.terminals {
                 let cwd = term_data.cwd.clone();
                 let session_name = term_data.session_name.clone();
+                let colors = terminal_colors.clone();
                 let term =
-                    cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, cx));
+                    cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx));
                 let actual_session = term.read(cx).session_name.clone();
                 if term_data.session_name != actual_session {
                     term_data.session_name = actual_session;
@@ -132,6 +147,7 @@ impl Workspace {
             update_installing: false,
             update_error: None,
             ime_composition: String::new(),
+            terminal_colors,
         };
 
         this.poll_git_branch(cx);
@@ -479,6 +495,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.state.theme = theme_fn();
+        // Re-inject the palette: running terminals pick it up on their next
+        // paint, and the next OSC probe from any CLI gets the new values.
+        let (fg, bg, ansi) = theme_terminal_colors(&self.state.theme).get();
+        self.terminal_colors.set(fg, bg, ansi);
         self.state.theme_name = Some(theme_name);
         self.theme_menu_open = false;
         self.state.save().ok();
@@ -490,7 +510,8 @@ impl Workspace {
 
         let cwd = self.get_active_terminal_cwd(cx);
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
+        let colors = self.terminal_colors.clone();
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
@@ -558,9 +579,7 @@ impl Workspace {
                 .get(ws_idx)
                 .and_then(|t| t.get(ws.active_term))
         {
-            let term = term.read(cx);
-            let parser = term.parser.lock().unwrap();
-            return parser.screen().size();
+            return term.read(cx).size();
         }
         (24, 80)
     }
@@ -569,8 +588,7 @@ impl Workspace {
         let ws_idx = self.state.active_workspace;
         let ws = self.state.workspaces.get(ws_idx)?;
         let term = self.terminals.get(ws_idx)?.get(ws.active_term)?.read(cx);
-        let parser = term.parser.lock().unwrap();
-        Some(parser.screen().cursor_position())
+        term.cursor_position()
     }
 
     pub fn cell_at(&self, pos: gpui::Point<gpui::Pixels>, cx: &App) -> (u16, u16) {
@@ -589,31 +607,10 @@ impl Workspace {
 
     pub fn selected_text(&self, cx: &App) -> Option<String> {
         let (start, end) = self.selection?;
-        let (c1, r1) = start;
-        let (c2, r2) = end;
-        let min_c = c1.min(c2);
-        let max_c = c1.max(c2);
-        let min_r = r1.min(r2);
-        let max_r = r1.max(r2);
         let ws_idx = self.state.active_workspace;
         let ws = self.state.workspaces.get(ws_idx)?;
-        let term = self.terminals.get(ws_idx)?.get(ws.active_term)?;
-        let term = term.read(cx);
-        let parser = term.parser.lock().unwrap();
-        let screen = parser.screen();
-        let mut lines = Vec::new();
-        for r in min_r..=max_r {
-            let mut line = String::new();
-            for c in min_c..=max_c {
-                if let Some(cell) = screen.cell(r, c) {
-                    line.push_str(cell.contents());
-                } else {
-                    line.push(' ');
-                }
-            }
-            lines.push(line);
-        }
-        Some(lines.join("\n"))
+        let term = self.terminals.get(ws_idx)?.get(ws.active_term)?.read(cx);
+        Some(term.text_in_range(start, end))
     }
 
     pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
@@ -1030,7 +1027,8 @@ impl Workspace {
         let name = "Terminal".to_string();
 
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, cx));
+        let colors = self.terminal_colors.clone();
+        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
         let session_name = term.read(cx).session_name.clone();
 

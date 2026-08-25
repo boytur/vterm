@@ -1,15 +1,60 @@
 use std::io::Write;
 use std::path::PathBuf;
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use alacritty_terminal::event::{Event, EventListener};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::sync::FairMutex;
+use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::vte::ansi::{ClearMode, Handler, NamedColor, Processor, StdSyncHandler};
+use alacritty_terminal::vte::ansi::Color as AnsiColor;
 use async_channel::{Receiver, Sender};
 use gpui::{Context, WeakEntity};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use vt100::Parser;
 
 const SCROLLBACK_LINES: usize = 10000;
+
+// The fixed xterm-standard palette the terminal pane renders with (the
+// workspace renderer consumes these same values). Deliberately NOT derived
+// from the app theme: recoloring these per-theme makes CLI tools (codex,
+// opencode, vim, etc.) render with mismatched colors whenever the user
+// switches themes.
+pub const STANDARD_ANSI: [u32; 16] = [
+    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, //
+    0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
+];
+
+// The terminal surface stays dark regardless of the app theme. CLI default
+// palettes assume a dark background.
+pub const TERMINAL_BG: u32 = 0x0d0d0d;
+pub const TERMINAL_FG: u32 = 0xe8e8e8;
+
+/// RGB channels for any xterm palette index (0–15 named, 16–231 color cube,
+/// 232–255 grayscale) exactly as the renderer displays it. Returns `None`
+/// outside 0..=256.
+pub fn palette_rgb(index: usize) -> Option<[u8; 3]> {
+    let channels = |hex: u32| [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8];
+    match index {
+        0..=15 => Some(channels(STANDARD_ANSI[index])),
+        16..=231 => {
+            let mut i = index - 16;
+            let b = ((i % 6) * 51) as u8;
+            i /= 6;
+            let g = ((i % 6) * 51) as u8;
+            i /= 6;
+            let r = ((i % 6) * 51) as u8;
+            Some([r, g, b])
+        }
+        232..=255 => {
+            // xterm grayscale ramp: 8..=238 in steps of 10.
+            let v = ((index - 232) * 10 + 8) as u8;
+            Some([v, v, v])
+        }
+        _ => None,
+    }
+}
 
 const ZSH_CODEPOINT_BACKSPACE: &str = r#"
 vterm_backward_delete_codepoint() {
@@ -25,10 +70,203 @@ bindkey -M viins '^?' vterm-backward-delete-codepoint
 
 /// Re-exported so downstream UI crates can interpret cell colors without
 /// depending on the emulator directly.
-pub use vt100;
+pub use alacritty_terminal;
+
+/// Collects emulator events (`ColorRequest`, `PtyWrite`, …) raised while
+/// parsing PTY output. Drained by the read loop, which answers them in
+/// order — the same lazy pattern Zed uses for its embedded alacritty core.
+#[derive(Clone, Default)]
+pub struct EventProxy(Arc<Mutex<Vec<Event>>>);
+
+impl EventListener for EventProxy {
+    fn send_event(&self, event: Event) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+/// Grid dimensions handed to alacritty on construction and resize.
+#[derive(Clone, Copy)]
+struct TermBounds {
+    rows: u16,
+    cols: u16,
+}
+
+impl Dimensions for TermBounds {
+    fn total_lines(&self) -> usize {
+        self.screen_lines()
+    }
+
+    fn screen_lines(&self) -> usize {
+        self.rows as usize
+    }
+
+    fn columns(&self) -> usize {
+        self.cols as usize
+    }
+}
+
+/// The default-foreground/background and ANSI 0–15 palette that child apps
+/// should see — shared by the OSC query responder and the renderer so they
+/// can never disagree. The workspace injects the active app theme into this;
+/// switches apply live to terminals that are already running (Zed's model:
+/// colors resolve at query/paint time, never baked in at spawn).
+#[derive(Clone)]
+pub struct TerminalColors {
+    inner: Arc<Mutex<ColorInner>>,
+}
+
+#[derive(Clone, Copy)]
+struct ColorInner {
+    fg: [u8; 3],
+    bg: [u8; 3],
+    ansi: [[u8; 3]; 16],
+}
+
+impl TerminalColors {
+    pub fn new(fg: [u8; 3], bg: [u8; 3], ansi: [[u8; 3]; 16]) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(ColorInner { fg, bg, ansi })),
+        }
+    }
+
+    /// The built-in fixed dark palette, used until a theme is injected.
+    pub fn dark() -> Self {
+        let ansi = STANDARD_ANSI.map(|hex| [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]);
+        Self::new(
+            [(TERMINAL_FG >> 16) as u8, (TERMINAL_FG >> 8) as u8, TERMINAL_FG as u8],
+            [(TERMINAL_BG >> 16) as u8, (TERMINAL_BG >> 8) as u8, TERMINAL_BG as u8],
+            ansi,
+        )
+    }
+
+    pub fn set(&self, fg: [u8; 3], bg: [u8; 3], ansi: [[u8; 3]; 16]) {
+        *self.inner.lock().unwrap() = ColorInner { fg, bg, ansi };
+    }
+
+    pub fn get(&self) -> ([u8; 3], [u8; 3], [[u8; 3]; 16]) {
+        let inner = self.inner.lock().unwrap();
+        (inner.fg, inner.bg, inner.ansi)
+    }
+
+    /// Resolves an OSC color-query index against the live theme. Cube
+    /// (16–231) and grayscale (232–255) ramps stay xterm-standard.
+    fn resolve(&self, index: usize) -> Option<[u8; 3]> {
+        match index {
+            0..=15 => Some(self.inner.lock().unwrap().ansi[index]),
+            16..=255 => palette_rgb(index),
+            256 | 267 => Some(self.inner.lock().unwrap().fg),
+            257 | 268 => Some(self.inner.lock().unwrap().bg),
+            // Dim variants: halve the base ANSI color.
+            259..=266 => {
+                let [r, g, b] = self.inner.lock().unwrap().ansi[index - 259];
+                Some([r / 2, g / 2, b / 2])
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A resolved cell color: either one of the terminal's defaults or an
+/// explicit palette entry / truecolor value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellColor {
+    Foreground,
+    Background,
+    Rgb([u8; 3]),
+    Palette(u8),
+}
+
+/// One grid cell as the renderer should paint it.
+#[derive(Debug, Clone, Copy)]
+pub struct TermCell {
+    pub ch: char,
+    pub fg: CellColor,
+    pub bg: CellColor,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub inverse: bool,
+    /// Continuation column of a double-width glyph; renderers must emit a
+    /// blank here to keep the grid aligned.
+    pub wide_spacer: bool,
+}
+
+/// An immutable view of exactly what the user sees (live screen plus any
+/// scrolled-back history), taken under a single lock.
+#[derive(Debug, Clone)]
+pub struct TerminalSnapshot {
+    pub rows: u16,
+    pub cols: u16,
+    /// Lines of history currently scrolled up from the live screen.
+    pub offset: usize,
+    /// Total lines of history that exist.
+    pub history: usize,
+    /// Cursor position relative to the viewport top-left, present only when
+    /// the live screen is visible.
+    pub cursor: Option<(u16, u16)>,
+    pub hide_cursor: bool,
+    /// Exactly `rows * cols` cells, row-major from the viewport top-left.
+    pub cells: Vec<TermCell>,
+}
+
+impl TerminalSnapshot {
+    pub fn cell(&self, row: u16, col: u16) -> Option<&TermCell> {
+        self.cells.get(row as usize * self.cols as usize + col as usize)
+    }
+}
+
+fn map_color(color: AnsiColor) -> CellColor {
+    match color {
+        AnsiColor::Named(
+            NamedColor::Foreground | NamedColor::BrightForeground | NamedColor::DimForeground,
+        ) => CellColor::Foreground,
+        AnsiColor::Named(NamedColor::Background) => CellColor::Background,
+        // The cursor color is unused by cell rendering.
+        AnsiColor::Named(NamedColor::Cursor) => CellColor::Foreground,
+        // Discriminants 0..=15 are the standard + bright palette in order.
+        AnsiColor::Named(named) if (named as usize) < 16 => CellColor::Palette(named as u8),
+        // We render no separate dim palette; fall back to the base colors
+        // (DimBlack starts at discriminant 259; the 8 dim colors follow).
+        AnsiColor::Named(
+            named @ (NamedColor::DimBlack
+            | NamedColor::DimRed
+            | NamedColor::DimGreen
+            | NamedColor::DimYellow
+            | NamedColor::DimBlue
+            | NamedColor::DimMagenta
+            | NamedColor::DimCyan
+            | NamedColor::DimWhite),
+        ) => CellColor::Palette((named as usize - NamedColor::DimBlack as usize) as u8),
+        AnsiColor::Spec(rgb) => CellColor::Rgb([rgb.r, rgb.g, rgb.b]),
+        AnsiColor::Indexed(i) => CellColor::Palette(i),
+        // Any other named color has no cell-rendering meaning here.
+        AnsiColor::Named(_) => CellColor::Foreground,
+    }
+}
+
+/// Builds a standalone emulator with our scrollback config, shared by real
+/// terminals, dead terminals, and tests.
+fn make_term(rows: u16, cols: u16) -> (Arc<FairMutex<Term<EventProxy>>>, Arc<Mutex<Vec<Event>>>) {
+    let proxy = EventProxy::default();
+    let events = proxy.0.clone();
+    let bounds = TermBounds { rows, cols };
+    let config = Config {
+        scrolling_history: SCROLLBACK_LINES,
+        ..Default::default()
+    };
+    (
+        Arc::new(FairMutex::new(Term::new(config, &bounds, proxy))),
+        events,
+    )
+}
 
 pub struct PtyTerminal {
-    pub parser: Arc<Mutex<Parser>>,
+    /// The embedded emulator core (Zed-style: alacritty under our lock,
+    /// driven manually from PTY bytes).
+    pub term: Arc<FairMutex<Term<EventProxy>>>,
+    events: Arc<Mutex<Vec<Event>>>,
+    /// Theme-injected palette shared with the renderer and OSC replies.
+    pub colors: TerminalColors,
     writer: Box<dyn Write + Send>,
     master: Option<Box<dyn MasterPty + Send>>,
     child: Option<Box<dyn Child + Send>>,
@@ -45,10 +283,11 @@ impl PtyTerminal {
         requested_session: Option<String>,
         rows: u16,
         cols: u16,
+        colors: TerminalColors,
         cx: &mut Context<Self>,
     ) -> Self {
-        let parser = Arc::new(Mutex::new(Parser::new(rows, cols, SCROLLBACK_LINES)));
-        let parser_clone = parser.clone();
+        let (term, events) = make_term(rows, cols);
+        let term_clone = term.clone();
 
         let pty_system = native_pty_system();
         let pair = match pty_system.openpty(PtySize {
@@ -60,7 +299,7 @@ impl PtyTerminal {
             Ok(pair) => pair,
             Err(e) => {
                 eprintln!("vterm: failed to open pty: {e}");
-                return dead_terminal(parser, None);
+                return dead_terminal(None, colors.clone());
             }
         };
 
@@ -75,18 +314,19 @@ impl PtyTerminal {
             cmd.cwd(cwd);
         }
 
+        // Spawn the shell directly on the PTY unless we are reattaching to
+        // an existing persisted session. GNU screen interprets the byte
+        // stream and swallows OSC color queries (OSC 10/11/4), which CLIs
+        // like opencode need answered to pick their dark/light theme — Zed
+        // has no multiplexer between shell and emulator, and neither do we.
         #[cfg(target_os = "macos")]
-        if screen_available() {
-            let name = requested_session
-                .filter(|name| valid_session_name(name))
-                .unwrap_or_else(new_session_name);
-            session_name = Some(name.clone());
+        if let Some((name, screen_target)) = requested_session
+            .filter(|name| valid_session_name(name))
+            .and_then(|name| screen_socket(&name).map(|socket| (name, socket)))
+        {
+            session_name = Some(name);
             cmd = CommandBuilder::new("screen");
-            if let Some(screen_target) = screen_socket(&name) {
-                cmd.args(["-A", "-xRR", &screen_target]);
-            } else {
-                cmd.args(["-S", &name, &shell, "-l"]);
-            }
+            cmd.args(["-A", "-xRR", &screen_target]);
             if let Some(cwd) = cwd.as_deref() {
                 cmd.cwd(cwd);
             }
@@ -135,7 +375,7 @@ impl PtyTerminal {
             Ok(child) => child,
             Err(e) => {
                 eprintln!("vterm: failed to spawn shell: {e}");
-                return dead_terminal(parser, session_name);
+                return dead_terminal(session_name, colors.clone());
             }
         };
 
@@ -143,14 +383,14 @@ impl PtyTerminal {
             Ok(reader) => reader,
             Err(e) => {
                 eprintln!("vterm: failed to take reader: {e}");
-                return dead_terminal(parser, session_name);
+                return dead_terminal(session_name, colors.clone());
             }
         };
         let writer = match pair.master.take_writer() {
             Ok(writer) => writer,
             Err(e) => {
                 eprintln!("vterm: failed to take writer: {e}");
-                return dead_terminal(parser, session_name);
+                return dead_terminal(session_name, colors.clone());
             }
         };
 
@@ -174,6 +414,7 @@ impl PtyTerminal {
         cx.spawn(|this: WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
             let mut cx = cx.clone();
             let mut filter = AltScreenFilter::new();
+            let mut processor = Processor::<StdSyncHandler>::new();
             async move {
                 while let Ok(bytes) = rx.recv().await {
                     // Coalesce the whole queued burst into one parse pass so
@@ -185,14 +426,23 @@ impl PtyTerminal {
                         batch.extend_from_slice(&next);
                     }
                     {
-                        let mut guard = parser_clone.lock().unwrap();
+                        let mut guard = term_clone.lock();
                         for (segment, clear_after) in filter.feed(&batch) {
-                            guard.process(&segment);
+                            processor.advance(&mut *guard, &segment);
                             if clear_after {
-                                let fresh = cleared_like(&mut guard);
-                                *guard = fresh;
+                                // Native CSI 3J semantics: drop saved lines,
+                                // keep the visible screen.
+                                guard.clear_screen(ClearMode::Saved);
                             }
                         }
+                    }
+                    // Color requests and PTY writes the emulator raised
+                    // while parsing must be answered in order.
+                    if this
+                        .update(&mut cx, |term_model, _| term_model.drain_events())
+                        .is_err()
+                    {
+                        break;
                     }
                     if this.update(&mut cx, |_, cx| cx.notify()).is_err() {
                         break;
@@ -205,7 +455,9 @@ impl PtyTerminal {
         let child_pid = child.process_id();
 
         Self {
-            parser,
+            term,
+            events,
+            colors,
             writer: Box::new(writer),
             master: Some(pair.master),
             child: Some(child),
@@ -232,7 +484,39 @@ impl PtyTerminal {
         let _ = self.writer.write_all(data);
         // Any user input snaps the view back to the bottom, like real
         // terminals do when you start typing while scrolled up.
-        self.parser.lock().unwrap().screen_mut().set_scrollback(0);
+        self.term.lock().scroll_display(Scroll::Bottom);
+    }
+
+    /// Answers the events the emulator raised while parsing PTY output:
+    /// color queries (OSC 10/11/4) with the exact colors this pane renders
+    /// — app-set overrides first, our fixed palette as fallback, Zed-style
+    /// — plus any writes the emulator itself wants on the PTY.
+    fn drain_events(&mut self) {
+        let pending = self.events.lock().unwrap().drain(..).collect::<Vec<_>>();
+        for event in pending {
+            match event {
+                Event::ColorRequest(index, format) => {
+                    if let Some(rgb) = self.query_color(index) {
+                        // Bypass write() — a machine reply must not reset
+                        // scrollback.
+                        let _ = self.writer.write_all(format(rgb).as_bytes());
+                    }
+                }
+                Event::PtyWrite(text) => {
+                    let _ = self.writer.write_all(text.as_bytes());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Resolves a palette index an app asked about. App-modified colors (set
+    /// via OSC 4 at runtime) win; otherwise the live theme palette answers —
+    /// so replies always match what the pane currently renders.
+    fn query_color(&self, index: usize) -> Option<alacritty_terminal::vte::ansi::Rgb> {
+        use alacritty_terminal::vte::ansi::Rgb;
+        let term_colors = self.term.lock().colors()[index];
+        term_colors.or_else(|| self.colors.resolve(index).map(|[r, g, b]| Rgb { r, g, b }))
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -244,11 +528,7 @@ impl PtyTerminal {
                 pixel_height: 0,
             });
         }
-        self.parser
-            .lock()
-            .unwrap()
-            .screen_mut()
-            .set_size(rows, cols);
+        self.term.lock().resize(TermBounds { rows, cols });
     }
 
     /// Scrolls by `delta_lines`. Positive values move toward history (up),
@@ -265,25 +545,110 @@ impl PtyTerminal {
         }
         self.scroll_accumulator -= whole_lines as f32;
 
-        let mut parser = self.parser.lock().unwrap();
-        let current_offset = parser.screen().scrollback();
-
-        let new_offset = if whole_lines > 0 {
-            current_offset.saturating_add(whole_lines as usize)
-        } else {
-            current_offset.saturating_sub((-whole_lines) as usize)
-        };
-
-        parser.screen_mut().set_scrollback(new_offset);
+        self.term.lock().scroll_display(Scroll::Delta(whole_lines));
     }
 
     pub fn scroll_info(&self) -> (usize, usize) {
-        let mut parser = self.parser.lock().unwrap();
-        let current = parser.screen().scrollback();
-        parser.screen_mut().set_scrollback(usize::MAX);
-        let max = parser.screen().scrollback();
-        parser.screen_mut().set_scrollback(current);
-        (current, max)
+        let term = self.term.lock();
+        let grid = term.grid();
+        (grid.display_offset(), term.history_size())
+    }
+
+    pub fn size(&self) -> (u16, u16) {
+        let term = self.term.lock();
+        let grid = term.grid();
+        (grid.screen_lines() as u16, grid.columns() as u16)
+    }
+
+    pub fn cursor_position(&self) -> Option<(u16, u16)> {
+        let term = self.term.lock();
+        let content = term.renderable_content();
+        if content.cursor.shape == alacritty_terminal::vte::ansi::CursorShape::Hidden {
+            return None;
+        }
+        Some((
+            content.cursor.point.line.0.max(0) as u16,
+            content.cursor.point.column.0 as u16,
+        ))
+    }
+
+    /// The text in a viewport-relative cell range (inclusive), one string
+    /// per row — used for copy-to-clipboard.
+    pub fn text_in_range(
+        &self,
+        (c1, r1): (u16, u16),
+        (c2, r2): (u16, u16),
+    ) -> String {
+        let snapshot = self.snapshot();
+        let min_c = c1.min(c2);
+        let max_c = c1.max(c2);
+        let mut lines = Vec::new();
+        for r in r1.min(r2)..=r1.max(r2) {
+            let mut line = String::new();
+            for c in min_c..=max_c {
+                line.push(
+                    snapshot
+                        .cell(r, c)
+                        .filter(|cell| !cell.wide_spacer)
+                        .map(|cell| cell.ch)
+                        .unwrap_or(' '),
+                );
+            }
+            lines.push(line);
+        }
+        lines.join("\n")
+    }
+
+    /// Captures exactly what the user sees — live screen plus scrolled-back
+    /// history — under one lock. The renderer works only off this.
+    pub fn snapshot(&self) -> TerminalSnapshot {
+        let term = self.term.lock();
+        let grid = term.grid();
+        let rows = grid.screen_lines() as u16;
+        let cols = grid.columns() as u16;
+        let offset = grid.display_offset();
+
+        let cursor = term.renderable_content().cursor;
+        let hide_cursor = cursor.shape == alacritty_terminal::vte::ansi::CursorShape::Hidden;
+        // The cursor belongs to the live screen; while scrolled into history
+        // it would highlight an arbitrary historical cell.
+        let cursor_pos = (offset == 0 && !hide_cursor).then(|| {
+            (
+                (cursor.point.line.0.max(0) as u16).min(rows.saturating_sub(1)),
+                (cursor.point.column.0 as u16).min(cols.saturating_sub(1)),
+            )
+        });
+
+        let mut cells = Vec::with_capacity(rows as usize * cols as usize);
+        for row in 0..rows as i32 {
+            // Negative lines reach into scrollback: viewport top is at
+            // Line(-offset), matching what vt100's display offset did.
+            let grid_row = &grid[Line(row - offset as i32)];
+            for col in 0..cols {
+                let cell = &grid_row[Column(col as usize)];
+                let wide_spacer = cell.flags.contains(Flags::WIDE_CHAR_SPACER);
+                cells.push(TermCell {
+                    ch: cell.c,
+                    fg: map_color(cell.fg),
+                    bg: map_color(cell.bg),
+                    bold: cell.flags.contains(Flags::BOLD),
+                    italic: cell.flags.contains(Flags::ITALIC),
+                    underline: cell.flags.contains(Flags::UNDERLINE),
+                    inverse: cell.flags.contains(Flags::INVERSE),
+                    wide_spacer,
+                });
+            }
+        }
+
+        TerminalSnapshot {
+            rows,
+            cols,
+            offset,
+            history: term.history_size(),
+            cursor: cursor_pos,
+            hide_cursor,
+            cells,
+        }
     }
 }
 
@@ -336,9 +701,12 @@ fn prepare_zsh_integration() -> Option<(PathBuf, String)> {
     Some((config_dir, original_zdotdir))
 }
 
-fn dead_terminal(parser: Arc<Mutex<Parser>>, session_name: Option<String>) -> PtyTerminal {
+fn dead_terminal(session_name: Option<String>, colors: TerminalColors) -> PtyTerminal {
+    let (term, events) = make_term(24, 80);
     PtyTerminal {
-        parser,
+        term,
+        events,
+        colors,
         writer: Box::new(std::io::sink()),
         master: None,
         child: None,
@@ -349,40 +717,11 @@ fn dead_terminal(parser: Arc<Mutex<Parser>>, session_name: Option<String>) -> Pt
 }
 
 #[cfg(target_os = "macos")]
-static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(target_os = "macos")]
-fn screen_available() -> bool {
-    std::process::Command::new("screen")
-        .arg("-v")
-        .output()
-        .is_ok()
-}
-
-#[cfg(target_os = "macos")]
 fn valid_session_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-}
-
-#[cfg(target_os = "macos")]
-fn new_session_name() -> String {
-    loop {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_nanos());
-        let name = format!(
-            "vterm-{}-{}-{}",
-            std::process::id(),
-            SESSION_COUNTER.fetch_add(1, Ordering::Relaxed),
-            nonce
-        );
-        if screen_socket(&name).is_none() {
-            return name;
-        }
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -539,24 +878,54 @@ impl AltScreenFilter {
     }
 }
 
-/// A fresh parser equal to `old` but with empty scrollback: vt100's own
-/// serialization round-trips visible cells, cursor and modes, and drops
-/// accumulated history — the effect terminals give `CSI 3J` after `clear`.
-fn cleared_like(old: &mut Parser) -> Parser {
-    // Serialize from the live view; a stale scrollback offset must not leak
-    // into the snapshot.
-    old.screen_mut().set_scrollback(0);
-    let (rows, cols) = old.screen().size();
-    let mut fresh = Parser::new(rows, cols, SCROLLBACK_LINES);
-    fresh.process(&old.screen().state_formatted());
-    fresh.process(&old.screen().input_mode_formatted());
-    fresh.process(&old.screen().cursor_state_formatted());
-    fresh
+/// Resolves an OSC color-query index to the exact RGB we render, using the
+/// same pseudo-indices alacritty's `Colors` table uses (256 = foreground,
+/// 257 = background, 259+ = dim variants). Returns `None` for indices with
+/// no meaningful answer (e.g. the cursor color).
+pub fn fallback_color_rgb(index: usize) -> Option<[u8; 3]> {
+    match index {
+        0..=255 => palette_rgb(index),
+        256 | 267 => Some([(TERMINAL_FG >> 16) as u8, (TERMINAL_FG >> 8) as u8, TERMINAL_FG as u8]),
+        257 | 268 => Some([(TERMINAL_BG >> 16) as u8, (TERMINAL_BG >> 8) as u8, TERMINAL_BG as u8]),
+        // Dim palette entries: halve the standard colors.
+        259..=266 => {
+            let [r, g, b] = palette_rgb(index - 259)?;
+            Some([r / 2, g / 2, b / 2])
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Feeds raw bytes through the same parse path as the read loop.
+    fn feed(term: &Arc<FairMutex<Term<EventProxy>>>, bytes: &[u8]) {
+        let mut processor = Processor::<StdSyncHandler>::new();
+        let mut guard = term.lock();
+        processor.advance(&mut *guard, bytes);
+    }
+
+    impl PtyTerminal {
+        /// Wraps a bare emulator (no PTY) so snapshot logic is testable.
+        fn for_testing(
+            term: Arc<FairMutex<Term<EventProxy>>>,
+            events: Arc<Mutex<Vec<Event>>>,
+        ) -> Self {
+            Self {
+                term,
+                events,
+                colors: TerminalColors::dark(),
+                writer: Box::new(std::io::sink()),
+                master: None,
+                child: None,
+                child_pid: None,
+                session_name: None,
+                scroll_accumulator: 0.0,
+            }
+        }
+    }
 
     fn flat(segments: Vec<(Vec<u8>, bool)>) -> (Vec<u8>, usize) {
         let mut bytes = Vec::new();
@@ -648,32 +1017,127 @@ mod tests {
     }
 
     #[test]
-    fn cleared_parser_keeps_contents_and_drops_history() {
-        fn deepest(p: &mut Parser) -> usize {
-            p.screen_mut().set_scrollback(usize::MAX);
-            p.screen().scrollback()
-        }
+    fn clear_saved_history_keeps_screen_and_drops_history() {
+        let (term, _events) = make_term(4, 20);
+        feed(&term, &[b'\n'; 40]);
+        feed(&term, b"visible");
+        assert!(term.lock().history_size() > 0, "history exists pre-clear");
 
-        let mut old = Parser::new(4, 20, SCROLLBACK_LINES);
-        // Fill history, then emulate `clear` at that boundary.
-        old.process(&vec![b'\n'; 40]);
-        old.process(b"visible");
-        assert!(deepest(&mut old) > 0, "history exists pre-clear");
+        term.lock().clear_screen(ClearMode::Saved);
+        let term = term.lock();
+        assert_eq!(term.history_size(), 0, "history purged");
 
-        let mut fresh = cleared_like(&mut old);
-        assert_eq!(deepest(&mut fresh), 0, "history purged");
         // The text sits where the cursor was left; verify it survived.
-        let (crow, ccol) = fresh.screen().cursor_position();
-        let ccol = ccol as usize;
-        let start = ccol.saturating_sub(7);
-        let row: String = (start..ccol)
-            .map(|c| {
-                fresh
-                    .screen()
-                    .cell(crow, c as u16)                    .map(|cell| cell.contents())
-                    .unwrap_or_default()
-            })
+        let point = term.grid().cursor.point;
+        let row = &term.grid()[point.line];
+        let start = point.column.0.saturating_sub(7);
+        let text: String = (start..point.column.0)
+            .map(|c| row[Column(c)].c)
             .collect();
-        assert_eq!(row, "visible", "live contents survive the swap");
+        assert_eq!(text, "visible", "live contents survive the clear");
+    }
+
+    #[test]
+    fn snapshot_renders_text_attributes_and_cursor() {
+        let (term, events) = make_term(4, 20);
+        feed(&term, b"\x1b[1;31mre\x1b[0md");
+
+        let snap = PtyTerminal::for_testing(term, events).snapshot();
+        assert_eq!((snap.rows, snap.cols), (4, 20));
+        assert_eq!(snap.offset, 0);
+        assert_eq!(
+            snap.cell(0, 0).map(|c| (c.ch, c.fg, c.bold)),
+            Some(('r', CellColor::Palette(1), true))
+        );
+        assert_eq!(
+            snap.cell(0, 1).map(|c| (c.ch, c.fg)),
+            Some(('e', CellColor::Palette(1)))
+        );
+        // Reset restores default colors.
+        assert_eq!(
+            snap.cell(0, 2).map(|c| (c.ch, c.fg)),
+            Some(('d', CellColor::Foreground))
+        );
+        // Cursor sits right after 'd'.
+        assert_eq!(snap.cursor, Some((0, 3)));
+        // Empty cells are blank spaces.
+        assert_eq!(snap.cell(3, 19).map(|c| c.ch), Some(' '));
+    }
+
+    #[test]
+    fn snapshot_views_scrollback_offset() {
+        let (term, events) = make_term(2, 10);
+        feed(&term, b"one\r\ntwo\r\nthree\r\nfour");
+
+        let live = PtyTerminal::for_testing(term.clone(), events.clone()).snapshot();
+        assert_eq!(live.history, 2);
+        assert_eq!(live.offset, 0);
+        assert_eq!(live.cell(0, 0).map(|c| c.ch), Some('t')); // "two"
+
+        // User scrolling moves the viewport into history (content-preserving).
+        // Screen shows [three, four], history [one, two]; scrolling 2 reveals
+        // the full history.
+        term.lock().scroll_display(Scroll::Delta(2));
+        let scrolled = PtyTerminal::for_testing(term, events).snapshot();
+        assert_eq!(scrolled.offset, 2);
+        assert_eq!(scrolled.cell(0, 0).map(|c| c.ch), Some('o')); // "one"
+        assert_eq!(scrolled.cell(1, 0).map(|c| c.ch), Some('t')); // "two"
+        // Cursor hidden while viewing history.
+        assert_eq!(scrolled.cursor, None);
+    }
+
+    #[test]
+    fn color_requests_are_raised_as_events() {
+        let (term, events) = make_term(4, 20);
+        feed(&term, b"out \x1b]11;?\x1b\\\x1b]4;1;?\x07");
+        let pending = events.lock().unwrap();
+        assert_eq!(pending.len(), 2, "bg + palette queries answered");
+        assert!(matches!(&pending[0], Event::ColorRequest(257, _)));
+        assert!(matches!(&pending[1], Event::ColorRequest(1, _)));
+    }
+
+    #[test]
+    fn theme_colors_resolve_query_indices() {
+        let mut ansi = STANDARD_ANSI.map(|hex| [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]);
+        // Inject a light-ish theme palette entry to prove dynamism.
+        ansi[1] = [0xaa, 0x12, 0x34];
+        let colors = TerminalColors::new([0x11, 0x22, 0x33], [0xdd, 0xee, 0xff], ansi);
+
+        assert_eq!(colors.resolve(0), Some([0x00, 0x00, 0x00]));
+        assert_eq!(colors.resolve(1), Some([0xaa, 0x12, 0x34]));
+        assert_eq!(colors.resolve(255), Some([238, 238, 238]));
+        // 256 = foreground, 257 = background pseudo-indices.
+        assert_eq!(colors.resolve(256), Some([0x11, 0x22, 0x33]));
+        assert_eq!(colors.resolve(257), Some([0xdd, 0xee, 0xff]));
+        // Dim entries halve the live ANSI palette; cursor has no answer.
+        assert_eq!(colors.resolve(259), Some([0x00, 0x00, 0x00]));
+        assert_eq!(colors.resolve(260), Some([0x55, 0x09, 0x1a]));
+        assert_eq!(colors.resolve(258), None);
+        assert_eq!(colors.resolve(269), None);
+
+        // Live updates apply immediately.
+        colors.set(
+            [0, 0, 0],
+            [255, 255, 255],
+            {
+                let mut a = ansi;
+                a[2] = [9, 9, 9];
+                a
+            },
+        );
+        assert_eq!(colors.resolve(256), Some([0, 0, 0]));
+        assert_eq!(colors.resolve(257), Some([255, 255, 255]));
+        assert_eq!(colors.resolve(2), Some([9, 9, 9]));
+    }
+
+    #[test]
+    fn palette_rgb_matches_xterm_standards() {
+        assert_eq!(palette_rgb(0), Some([0x00, 0x00, 0x00]));
+        assert_eq!(palette_rgb(15), Some([0xff, 0xff, 0xff]));
+        assert_eq!(palette_rgb(16), Some([0x00, 0x00, 0x00]));
+        assert_eq!(palette_rgb(231), Some([0xff, 0xff, 0xff]));
+        assert_eq!(palette_rgb(232), Some([8, 8, 8]));
+        assert_eq!(palette_rgb(255), Some([238, 238, 238]));
+        assert_eq!(palette_rgb(256), None);
     }
 }

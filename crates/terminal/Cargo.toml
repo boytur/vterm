@@ -5,10 +5,10 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+alacritty_terminal.workspace = true
 async-channel.workspace = true
 gpui.workspace = true
 portable-pty.workspace = true
-vt100.workspace = true
 
 [dev-dependencies]
 criterion = "0.5"

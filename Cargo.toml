@@ -22,6 +22,7 @@ ui = { path = "crates/ui" }
 workspace = { path = "crates/workspace" }
 
 async-channel = "2"
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 dirs = "6.0.0"
 gpui = "0.2.2"
 portable-pty = "0.8"
@@ -29,4 +30,3 @@ semver = "1.0.26"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 ureq = { version = "2.12.1", features = ["json", "tls"] }
-vt100 = "0.16.2"
