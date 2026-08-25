@@ -69,5 +69,14 @@ jobs:
           git add Cargo.toml
           git commit -m "chore(release): bump version to $NEW ($BUMP via PR #$PR_NUMBER) - $PR_TITLE"
           git tag "v$NEW"
+
+          # Push with a real token so the tag push fires the CD workflow.
+          # GITHUB_TOKEN-pushed tags are silently ignored by GitHub to prevent
+          # workflow loops, so fall back to RELEASE_TOKEN (fine-grained PAT with
+          # contents: write). If it's absent we still commit+tag, but no release
+          # is built until the secret is configured.
+          TOKEN="${{ secrets.RELEASE_TOKEN }}"
+          if [ -z "$TOKEN" ]; then TOKEN="${{ secrets.GITHUB_TOKEN }}"; fi
+          git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
           git push origin master
           git push origin "v$NEW"
