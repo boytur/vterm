@@ -56,6 +56,7 @@ pub struct Workspace {
     pub settings_open: bool,
     pub settings_section: SettingsSection,
     pub branch_menu_open: bool,
+    pub branch_search: TextField,
     pub alert_modal: Option<(String, String)>,
     pub selection: Option<((u16, u16), (u16, u16))>,
     pub selecting: bool,
@@ -137,6 +138,7 @@ impl Workspace {
             settings_open: false,
             settings_section: SettingsSection::Appearance,
             branch_menu_open: false,
+            branch_search: TextField::new(""),
             alert_modal: None,
             selection: None,
             selecting: false,
@@ -452,6 +454,7 @@ impl Workspace {
 
     pub fn toggle_branch_menu(&mut self, cx: &mut Context<Self>) {
         self.branch_menu_open = !self.branch_menu_open;
+        self.branch_search = TextField::new("");
         if self.branch_menu_open
             && let Some(cwd) = self.get_active_terminal_cwd(cx)
             && let Ok(output) = std::process::Command::new("git")
@@ -803,6 +806,37 @@ impl Workspace {
                     {
                         field.key(&key, &modifiers, cx);
                     }
+                }
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+
+        if self.branch_menu_open {
+            let key = event.keystroke.key.as_str().to_string();
+            let modifiers = event.keystroke.modifiers;
+            match key.as_str() {
+                "escape" => {
+                    self.branch_menu_open = false;
+                    self.branch_search = TextField::new("");
+                }
+                "enter" => {
+                    let q = self.branch_search.value().to_lowercase();
+                    let first = self
+                        .git_branches
+                        .iter()
+                        .find(|b| b.to_lowercase().contains(&q))
+                        .cloned();
+                    if let Some(b) = first {
+                        self.checkout_branch(&b, cx);
+                    } else {
+                        self.branch_menu_open = false;
+                        self.branch_search = TextField::new("");
+                    }
+                }
+                _ => {
+                    self.branch_search.key(&key, &modifiers, cx);
                 }
             }
             cx.notify();
@@ -1547,6 +1581,7 @@ impl Render for Workspace {
         }
 
         if self.branch_menu_open && !self.git_branches.is_empty() {
+            let query = self.branch_search.value().to_lowercase();
             let mut list = div()
                 .id("branch-dropdown")
                 .absolute()
@@ -1567,60 +1602,92 @@ impl Render for Workspace {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
+                        .relative()
+                        .child(self.branch_search.render(theme))
+                        .when(self.branch_search.value().is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .left(px(10.0))
+                                    .top(px(10.0))
+                                    .text_color(theme.text_muted)
+                                    .text_size(px(12.0))
+                                    .child("Search branches…"),
+                            )
+                        }),
+                )
+                .child(
+                    div()
                         .p_2()
                         .text_color(theme.text_muted)
                         .text_size(px(11.0))
                         .child("Local Branches"),
                 );
 
-            for branch in &self.git_branches {
-                let b = branch.clone();
-                let is_active = self.git_branch == *branch;
+            let filtered: Vec<&String> = self
+                .git_branches
+                .iter()
+                .filter(|b| b.to_lowercase().contains(&query))
+                .collect();
 
+            if filtered.is_empty() {
                 list = list.child(
                     div()
-                        .id(gpui::SharedString::from(branch.clone()))
                         .p_2()
-                        .rounded_sm()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .hover(|s| s.bg(theme.bg_tab_inactive))
-                        .cursor_pointer()
-                        .text_color(if is_active {
-                            theme.accent
-                        } else {
-                            theme.text_primary
-                        })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _e, _w, cx| {
-                                this.checkout_branch(&b, cx);
-                            }),
-                        )
-                        .child(
-                            div()
-                                .w(px(14.0))
-                                .h(px(14.0))
-                                .child(
-                                    gpui::svg()
-                                        .path("icons/git_branch.svg")
-                                        .text_color(if is_active {
-                                            theme.accent
-                                        } else {
-                                            theme.text_muted
-                                        })
-                                        .size(px(14.0)),
-                                ),
-                        )
-                        .child(div().flex_1().child(branch.clone()))
-                        .child(if is_active {
-                            div().w(px(12.0)).child("✓")
-                        } else {
-                            div().w(px(12.0))
-                        }),
+                        .text_color(theme.text_muted)
+                        .text_size(px(12.0))
+                        .child("No branches found"),
                 );
+            } else {
+                for branch in filtered {
+                    let b = branch.clone();
+                    let is_active = self.git_branch == *branch;
+
+                    list = list.child(
+                        div()
+                            .id(gpui::SharedString::from(branch.clone()))
+                            .p_2()
+                            .rounded_sm()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .hover(|s| s.bg(theme.bg_tab_inactive))
+                            .cursor_pointer()
+                            .text_color(if is_active {
+                                theme.accent
+                            } else {
+                                theme.text_primary
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.checkout_branch(&b, cx);
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .w(px(14.0))
+                                    .h(px(14.0))
+                                    .child(
+                                        gpui::svg()
+                                            .path("icons/git_branch.svg")
+                                            .text_color(if is_active {
+                                                theme.accent
+                                            } else {
+                                                theme.text_muted
+                                            })
+                                            .size(px(14.0)),
+                                    ),
+                            )
+                            .child(div().flex_1().child(branch.clone()))
+                            .child(if is_active {
+                                div().w(px(12.0)).child("✓")
+                            } else {
+                                div().w(px(12.0))
+                            }),
+                    );
+                }
             }
             let backdrop = div()
                 .id("branch-backdrop")
