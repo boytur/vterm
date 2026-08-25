@@ -204,7 +204,7 @@ impl TextField {
                 div()
                     .w(px(1.5))
                     .h(px(14.0))
-                    .mt(px(0.5))
+                    .mt(px(2.0))
                     .flex_shrink_0()
                     .bg(theme.text_primary)
                     .with_animation(
@@ -216,10 +216,7 @@ impl TextField {
                     ),
             );
         } else {
-            row = row.child(
-                text_span(selected)
-                    .bg(gpui::rgba(0x0a84ff55)),
-            );
+            row = row.child(text_span(selected).bg(gpui::rgba(0x0a84ff55)));
         }
 
         if !after.is_empty() {
