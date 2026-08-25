@@ -4,6 +4,18 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+- Highlight the destination tab with the accent color (background tint + border) while dragging a tab to reorder, so the drop target is clearly visible instead of the previous near-invisible 2px bar.
+- Apply the same drag-reorder drop-target highlight to the workspace sidebar: the destination workspace (and the + Add Workspace button) now show an accent background tint + border while dragging.
+- Drop the always-on border on sidebar workspace items (and inactive tabs) in the normal state — borders now appear only for the active item or the drag drop target.
+- Widen the workspace sidebar (192px → 256px) and truncate long workspace names with an ellipsis instead of overflowing or shrinking the delete button.
+- Cap the title-bar git branch name at 240px and ellipsis-truncate it when longer, so long branch names no longer push into the Theme/Settings buttons.
+- Add a full-window backdrop behind the branch dropdown so opening it no longer lets clicks/hover fall through to the terminal or title bar in the background (outside clicks now just close the menu). The dropdown now behaves as a true modal — only the branch box is interactive while it's open. The backdrop also captures mouse-move and shows a default cursor so background hover (tabs/terminal) is suppressed while the modal is open.
+- Suppress hover highlighting on the background UI (terminal tabs, sidebar workspaces, title-bar Theme/Settings buttons) while the branch or theme modal is open, so the underlying elements no longer light up where the dropdown overlaps them.
+- Add a git-branch icon before each branch name in the Local Branches dropdown (checkmark moved to the right of the name) so every row is clearly a branch.
+- Add a search box to the Local Branches dropdown to filter branches as you type; Enter checks out the first match, Esc closes, and "No branches found" shows when the filter matches nothing. The search box now has a magnifier icon *inside* the input (text indented via a `left_pad`), a blinking caret, and the placeholder sits at the top of the box.
+- Title bar: only empty header space now starts a window move — the branch/theme/Settings buttons no longer trigger a window move (the move handler was moved to a drag layer behind the buttons).
+- Opening the Local Branches dropdown now focuses the window so you can type to search immediately (previously the terminal kept focus and the first keystrokes were lost until you clicked the search box).
+- The search input now has a fixed height (34px) so it no longer grows by a few pixels when you start typing (was sizing to the caret vs. the text line).
 - Terminal panes now follow the app theme: background, foreground, and the ANSI 0–15 palette are injected from the selected theme and apply live — including to terminals that are already running.
 - Swap the terminal emulator core from `vt100` to `alacritty_terminal` (the same core Zed embeds), so apps like opencode and codex run against a battle-tested xterm implementation.
 - Answer OSC 10/11/4 color queries from the emulator itself at query time, replying with the exact colors the pane renders — opencode now detects the dark background on startup and picks its dark theme instead of a broken fallback.

@@ -4,6 +4,7 @@ use gpui::*;
 
 pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> impl IntoElement {
     let theme = &workspace.state.theme;
+    let modal_open = workspace.branch_menu_open || workspace.theme_menu_open;
 
     // Get active workspace name
     let ws_name = workspace
@@ -36,12 +37,14 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
             } else {
                 gpui::rgba(0x00000000)
             })
-            .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+            .when(!modal_open, |el| {
+                el.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 _cx.listener(|this, _e, _w, cx| {
                     cx.stop_propagation();
-                    this.toggle_branch_menu(cx);
+                    this.toggle_branch_menu(_w, cx);
                 }),
             )
             .child(
@@ -60,11 +63,17 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                             .size(px(14.0)),
                     ),
             )
-            .child(workspace.git_branch.clone())
+            .child(
+                div()
+                    .max_w(px(240.0))
+                    .truncate()
+                    .child(workspace.git_branch.clone()),
+            )
     };
 
     div()
         .id("title-bar")
+        .relative()
         .w_full()
         .h(px(32.0))
         .bg(theme.bg_sidebar)
@@ -76,13 +85,21 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
         .pr(px(16.0))
         .border_b_1()
         .border_color(theme.border)
-        .on_mouse_down(MouseButton::Left, |event, window, _cx| {
-            if event.click_count == 2 {
-                window.zoom_window();
-            } else {
-                window.start_window_move();
-            }
-        })
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .on_mouse_down(MouseButton::Left, |event, window, _cx| {
+                    if event.click_count == 2 {
+                        window.zoom_window();
+                    } else {
+                        window.start_window_move();
+                    }
+                }),
+        )
         .child(
             div()
                 .flex()
@@ -118,7 +135,9 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                         })
                         .text_size(px(12.0))
                         .cursor_pointer()
-                        .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+                        .when(!modal_open, |el| {
+                            el.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+                        })
                         .on_mouse_down(
                             MouseButton::Left,
                             _cx.listener(|this, _e, _w, cx| {

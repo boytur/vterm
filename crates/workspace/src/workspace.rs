@@ -46,6 +46,7 @@ pub struct Workspace {
     pub terminals: Vec<Vec<Entity<PtyTerminal>>>,
     pub tab_context_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     pub tab_drop_target: Option<usize>,
+    pub dir_drop_target: Option<usize>,
     pub dir_context_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     pub renaming_tab_modal: Option<(usize, TextField)>,
     pub renaming_dir_modal: Option<(usize, TextField)>,
@@ -55,6 +56,7 @@ pub struct Workspace {
     pub settings_open: bool,
     pub settings_section: SettingsSection,
     pub branch_menu_open: bool,
+    pub branch_search: TextField,
     pub alert_modal: Option<(String, String)>,
     pub selection: Option<((u16, u16), (u16, u16))>,
     pub selecting: bool,
@@ -104,8 +106,8 @@ impl Workspace {
                 let cwd = term_data.cwd.clone();
                 let session_name = term_data.session_name.clone();
                 let colors = terminal_colors.clone();
-                let term =
-                    cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx));
+                let term = cx
+                    .new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx));
                 let actual_session = term.read(cx).session_name.clone();
                 if term_data.session_name != actual_session {
                     term_data.session_name = actual_session;
@@ -126,6 +128,7 @@ impl Workspace {
             terminals,
             tab_context_menu: None,
             tab_drop_target: None,
+            dir_drop_target: None,
             dir_context_menu: None,
             renaming_tab_modal: None,
             renaming_dir_modal: None,
@@ -135,6 +138,7 @@ impl Workspace {
             settings_open: false,
             settings_section: SettingsSection::Appearance,
             branch_menu_open: false,
+            branch_search: TextField::new("").with_left_pad(24.0),
             alert_modal: None,
             selection: None,
             selecting: false,
@@ -448,17 +452,20 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_branch_menu(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_branch_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.branch_menu_open = !self.branch_menu_open;
-        if self.branch_menu_open
-            && let Some(cwd) = self.get_active_terminal_cwd(cx)
-            && let Ok(output) = std::process::Command::new("git")
-                .args(["branch", "--format=%(refname:short)"])
-                .current_dir(cwd)
-                .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+        self.branch_search = TextField::new("").with_left_pad(24.0);
+        if self.branch_menu_open {
+            window.focus(&self.focus_handle);
+            if let Some(cwd) = self.get_active_terminal_cwd(cx)
+                && let Ok(output) = std::process::Command::new("git")
+                    .args(["branch", "--format=%(refname:short)"])
+                    .current_dir(cwd)
+                    .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+            }
         }
         cx.notify();
     }
@@ -511,7 +518,8 @@ impl Workspace {
         let cwd = self.get_active_terminal_cwd(cx);
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
         let colors = self.terminal_colors.clone();
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
+        let term =
+            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
@@ -807,6 +815,37 @@ impl Workspace {
             return;
         }
 
+        if self.branch_menu_open {
+            let key = event.keystroke.key.as_str().to_string();
+            let modifiers = event.keystroke.modifiers;
+            match key.as_str() {
+                "escape" => {
+                    self.branch_menu_open = false;
+                    self.branch_search = TextField::new("");
+                }
+                "enter" => {
+                    let q = self.branch_search.value().to_lowercase();
+                    let first = self
+                        .git_branches
+                        .iter()
+                        .find(|b| b.to_lowercase().contains(&q))
+                        .cloned();
+                    if let Some(b) = first {
+                        self.checkout_branch(&b, cx);
+                    } else {
+                        self.branch_menu_open = false;
+                        self.branch_search = TextField::new("");
+                    }
+                }
+                _ => {
+                    self.branch_search.key(&key, &modifiers, cx);
+                }
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+
         if event.keystroke.modifiers.platform {
             match event.keystroke.key.as_str() {
                 "=" | "+" => {
@@ -1028,7 +1067,8 @@ impl Workspace {
 
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
         let colors = self.terminal_colors.clone();
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
+        let term =
+            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
         let session_name = term.read(cx).session_name.clone();
 
@@ -1543,12 +1583,13 @@ impl Render for Workspace {
         }
 
         if self.branch_menu_open && !self.git_branches.is_empty() {
+            let query = self.branch_search.value().to_lowercase();
             let mut list = div()
                 .id("branch-dropdown")
                 .absolute()
                 .top(px(28.0))
                 .left(px(80.0)) // Roughly aligned with branch text
-                .w(px(200.0))
+                .w(px(500.0))
                 .max_h(px(300.0))
                 .overflow_y_scroll()
                 .bg(theme.bg_sidebar)
@@ -1563,47 +1604,124 @@ impl Render for Workspace {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
+                        .relative()
+                        .child(self.branch_search.render(theme))
+                        .child(
+                            div()
+                                .absolute()
+                                .left(px(8.0))
+                                .top(px(8.0))
+                                .w(px(16.0))
+                                .h(px(16.0))
+                                .child(
+                                    gpui::svg()
+                                        .path("icons/search.svg")
+                                        .text_color(theme.text_muted)
+                                        .size(px(16.0)),
+                                ),
+                        )
+                        .when(self.branch_search.value().is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .left(px(24.0))
+                                    .top(px(6.0))
+                                    .text_color(theme.text_muted)
+                                    .text_size(px(12.0))
+                                    .child("Search branches…"),
+                            )
+                        }),
+                )
+                .child(
+                    div()
                         .p_2()
                         .text_color(theme.text_muted)
                         .text_size(px(11.0))
                         .child("Local Branches"),
                 );
 
-            for branch in &self.git_branches {
-                let b = branch.clone();
-                let is_active = self.git_branch == *branch;
+            let filtered: Vec<&String> = self
+                .git_branches
+                .iter()
+                .filter(|b| b.to_lowercase().contains(&query))
+                .collect();
 
+            if filtered.is_empty() {
                 list = list.child(
                     div()
-                        .id(gpui::SharedString::from(branch.clone()))
                         .p_2()
-                        .rounded_sm()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .hover(|s| s.bg(theme.bg_tab_inactive))
-                        .cursor_pointer()
-                        .text_color(if is_active {
-                            theme.accent
-                        } else {
-                            theme.text_primary
-                        })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _e, _w, cx| {
-                                this.checkout_branch(&b, cx);
-                            }),
-                        )
-                        .child(if is_active {
-                            div().w(px(12.0)).child("✓")
-                        } else {
-                            div().w(px(12.0))
-                        })
-                        .child(branch.clone()),
+                        .text_color(theme.text_muted)
+                        .text_size(px(12.0))
+                        .child("No branches found"),
                 );
+            } else {
+                for branch in filtered {
+                    let b = branch.clone();
+                    let is_active = self.git_branch == *branch;
+
+                    list = list.child(
+                        div()
+                            .id(gpui::SharedString::from(branch.clone()))
+                            .p_2()
+                            .rounded_sm()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .hover(|s| s.bg(theme.bg_tab_inactive))
+                            .cursor_pointer()
+                            .text_color(if is_active {
+                                theme.accent
+                            } else {
+                                theme.text_primary
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.checkout_branch(&b, cx);
+                                }),
+                            )
+                            .child(
+                                div().w(px(14.0)).h(px(14.0)).child(
+                                    gpui::svg()
+                                        .path("icons/git_branch.svg")
+                                        .text_color(if is_active {
+                                            theme.accent
+                                        } else {
+                                            theme.text_muted
+                                        })
+                                        .size(px(14.0)),
+                                ),
+                            )
+                            .child(div().flex_1().child(branch.clone()))
+                            .child(if is_active {
+                                div().w(px(12.0)).child("✓")
+                            } else {
+                                div().w(px(12.0))
+                            }),
+                    );
+                }
             }
-            root = root.child(list);
+            let backdrop = div()
+                .id("branch-backdrop")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(gpui::rgba(0x00000022))
+                .cursor_default()
+                .on_mouse_move(cx.listener(|_, _, _, _| {}))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _e, _w, cx| {
+                        this.branch_menu_open = false;
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+
+            root = root.child(backdrop).child(list);
         }
 
         if let Some(msg) = &self.toast {

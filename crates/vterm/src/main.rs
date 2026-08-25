@@ -11,6 +11,9 @@ impl gpui::AssetSource for Assets {
             "icons/git_branch.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
                 "../../../assets/icons/git_branch.svg"
             )))),
+            "icons/search.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../../../assets/icons/search.svg"
+            )))),
             _ => Ok(None),
         }
     }

@@ -1,4 +1,5 @@
 use gpui::*;
+use std::time::Duration;
 use theme::Theme;
 
 /// Minimal single-line editable text field with caret, selection and
@@ -11,6 +12,8 @@ pub struct TextField {
     caret: usize,
     /// Byte offset where the active selection started, if any.
     anchor: Option<usize>,
+    /// Extra left padding (px) so an icon can sit inside the box.
+    left_pad: f32,
 }
 
 impl TextField {
@@ -21,7 +24,14 @@ impl TextField {
             value,
             caret,
             anchor: None,
+            left_pad: 0.0,
         }
+    }
+
+    /// Reserve `pad` px of left padding inside the box (for an inline icon).
+    pub fn with_left_pad(mut self, pad: f32) -> Self {
+        self.left_pad = pad;
+        self
     }
 
     pub fn value(&self) -> &str {
@@ -183,7 +193,7 @@ impl TextField {
         let selected = &self.value[start..end];
         let after = &self.value[end..];
 
-        let mut row = div().flex().flex_row().items_center();
+        let mut row = div().flex().flex_row().items_start();
 
         if !before.is_empty() {
             row = row.child(text_span(before));
@@ -194,14 +204,19 @@ impl TextField {
                 div()
                     .w(px(1.5))
                     .h(px(14.0))
+                    .mt(px(2.0))
                     .flex_shrink_0()
-                    .bg(theme.text_primary),
+                    .bg(theme.text_primary)
+                    .with_animation(
+                        "text-field-caret",
+                        Animation::new(Duration::from_millis(1000))
+                            .repeat()
+                            .with_easing(|t| 0.5 + 0.5 * (t * 2.0 * std::f32::consts::PI).cos()),
+                        |el, alpha| el.opacity(alpha),
+                    ),
             );
         } else {
-            row = row.child(
-                text_span(selected)
-                    .bg(gpui::rgba(0x0a84ff55)),
-            );
+            row = row.child(text_span(selected).bg(gpui::rgba(0x0a84ff55)));
         }
 
         if !after.is_empty() {
@@ -210,7 +225,10 @@ impl TextField {
 
         div()
             .w_full()
+            .h(px(34.0))
             .p_2()
+            .pt(px(6.0))
+            .pl(px(self.left_pad))
             .bg(theme.bg_tab_inactive)
             .rounded_md()
             .border_1()
