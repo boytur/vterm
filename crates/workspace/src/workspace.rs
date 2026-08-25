@@ -13,9 +13,11 @@ use ui::{button::button, modal::modal_overlay, text_input::TextField};
 
 // Layout constants that must match the real UI chrome. The terminal pane sits
 // right of the sidebar (w_64 = 256px in gpui rem units) and below the title bar
-// (h(px(32.0))), with px_4() (16px) padding on every side.
+// (h(px(32.0))) + tab bar (h(px(32.0))), with px_4() (16px) padding on every
+// side.
 const SIDEBAR_WIDTH: f32 = 256.0;
 const TITLE_BAR_HEIGHT: f32 = 32.0;
+const TAB_BAR_HEIGHT: f32 = 32.0;
 const PANE_PAD: f32 = 16.0;
 
 fn process_cwd(pid: u32) -> Option<String> {
@@ -174,8 +176,9 @@ impl Workspace {
             ((f32::from(viewport.width) - SIDEBAR_WIDTH - PANE_PAD * 2.0) / cell_w).max(10.0)
                 as u16;
         let rows =
-            ((f32::from(viewport.height) - TITLE_BAR_HEIGHT - PANE_PAD * 2.0) / cell_h).max(10.0)
-                as u16;
+            ((f32::from(viewport.height) - TITLE_BAR_HEIGHT - TAB_BAR_HEIGHT - PANE_PAD * 2.0)
+                / cell_h)
+                .max(10.0) as u16;
         (rows, cols)
     }
 
@@ -616,7 +619,7 @@ impl Workspace {
         let cell_h = font_size * (20.0 / 14.0);
         let (rows, cols) = self.active_screen_size(cx);
         let origin_x = SIDEBAR_WIDTH + PANE_PAD;
-        let origin_y = TITLE_BAR_HEIGHT + PANE_PAD;
+        let origin_y = TITLE_BAR_HEIGHT + TAB_BAR_HEIGHT + PANE_PAD;
         let col = (((f32::from(pos.x) - origin_x) / cell_w).floor()).clamp(0.0, (cols as f32) - 1.0)
             as u16;
         let row = (((f32::from(pos.y) - origin_y) / cell_h).floor()).clamp(0.0, (rows as f32) - 1.0)
