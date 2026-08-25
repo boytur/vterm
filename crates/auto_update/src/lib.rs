@@ -4,6 +4,21 @@ use std::path::{Path, PathBuf};
 pub const CURRENT_VERSION: &str = env!("VTERM_VERSION");
 pub const REPO: &str = "boytur/vterm";
 
+pub fn app_name() -> String {
+    std::env::var("VTERM_APP_NAME").unwrap_or_else(|_| "vterm".to_string())
+}
+
+pub fn current_version() -> String {
+    std::env::var("VTERM_DEV_VERSION")
+        .ok()
+        .filter(|version| !version.is_empty())
+        .unwrap_or_else(|| CURRENT_VERSION.to_string())
+}
+
+pub fn is_dev_build() -> bool {
+    std::env::var_os("VTERM_DEV_BUILD").is_some()
+}
+
 #[derive(Debug, Clone)]
 pub struct UpdateInfo {
     pub version: String,
@@ -29,6 +44,10 @@ struct Asset {
 /// Queries the GitHub "latest release" endpoint and returns update info when a
 /// newer version than the running build is available.
 pub fn check_for_update_detailed() -> Result<Option<UpdateInfo>, String> {
+    if is_dev_build() {
+        return Ok(None);
+    }
+
     let url = format!("https://api.github.com/repos/{}/releases/latest", REPO);
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(10))
@@ -39,7 +58,8 @@ pub fn check_for_update_detailed() -> Result<Option<UpdateInfo>, String> {
     let release: Release = resp.into_json().map_err(|e| e.to_string())?;
 
     let latest = release.tag_name.trim_start_matches('v');
-    if !is_newer(latest, CURRENT_VERSION.trim_start_matches('v')) {
+    let current = current_version();
+    if !is_newer(latest, current.trim_start_matches('v')) {
         return Ok(None);
     }
 

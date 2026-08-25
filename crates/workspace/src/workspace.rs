@@ -486,10 +486,7 @@ impl Workspace {
     }
 
     pub fn add_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name = std::env::current_dir()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "Workspace".into());
+        let name = "Workspace".to_string();
 
         let cwd = self.get_active_terminal_cwd(cx);
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);

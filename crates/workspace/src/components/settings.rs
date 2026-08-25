@@ -1,5 +1,4 @@
 use crate::workspace::Workspace;
-use auto_update::CURRENT_VERSION;
 use gpui::prelude::*;
 use gpui::*;
 use theme::Theme;
@@ -274,7 +273,9 @@ fn shortcut_row(label: &'static str, shortcut: &'static str, theme: &Theme) -> D
 
 fn render_about(workspace: &Workspace, cx: &mut Context<Workspace>) -> Div {
     let theme = &workspace.state.theme;
-    let update_status = if workspace.update_checking {
+    let update_status = if auto_update::is_dev_build() {
+        "Development build — updates disabled".to_string()
+    } else if workspace.update_checking {
         "Checking for updates…".to_string()
     } else if workspace.update_downloading {
         "Downloading update in the background…".to_string()
@@ -468,12 +469,12 @@ fn render_about(workspace: &Workspace, cx: &mut Context<Workspace>) -> Div {
                     div()
                         .text_size(px(16.0))
                         .font_weight(FontWeight::BOLD)
-                        .child("vterm"),
+                        .child(auto_update::app_name()),
                 )
                 .child(
                     div()
                         .text_color(theme.text_muted)
-                        .child(format!("Version {CURRENT_VERSION}")),
+                        .child(format!("Version {}", auto_update::current_version())),
                 )
                 .child(
                     div()

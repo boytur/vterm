@@ -102,8 +102,15 @@ impl PtyTerminal {
         // launched from another terminal (e.g. `cargo run` inside Zed) —
         // contains that terminal's identity vars. CLIs key integrations off
         // them, so replace them with vterm's own identity.
-        cmd.env("TERM_PROGRAM", "vterm");
-        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        cmd.env(
+            "TERM_PROGRAM",
+            std::env::var("VTERM_APP_NAME").unwrap_or_else(|_| "vterm".to_string()),
+        );
+        cmd.env(
+            "TERM_PROGRAM_VERSION",
+            std::env::var("VTERM_DEV_VERSION")
+                .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
+        );
         for foreign in [
             "ZED_TERM",
             "ITERM_SESSION_ID",

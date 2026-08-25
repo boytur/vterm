@@ -38,11 +38,10 @@ fn default_font_size() -> f32 {
 }
 
 impl AppState {
+    // Keep naming independent from the process CWD (dev.sh, Finder, and a
+    // release app can all start in different directories).
     fn default_dir_name() -> String {
-        std::env::current_dir()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "Workspace".into())
+        "Workspace".into()
     }
 
     pub fn new() -> Self {
@@ -68,7 +67,7 @@ impl AppState {
 
     pub fn save_path() -> PathBuf {
         let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("vterm");
+        path.push(std::env::var("VTERM_CONFIG_NAME").unwrap_or_else(|_| "vterm".to_string()));
         fs::create_dir_all(&path).ok();
         path.push("state.json");
         path
