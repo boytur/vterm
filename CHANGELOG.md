@@ -5,6 +5,7 @@ All notable changes to vterm are documented here.
 ## [Unreleased]
 
 - Highlight the destination tab with the accent color (background tint + border) while dragging a tab to reorder, so the drop target is clearly visible instead of the previous near-invisible 2px bar.
+- Apply the same drag-reorder drop-target highlight to the workspace sidebar: the destination workspace (and the + Add Workspace button) now show an accent background tint + border while dragging.
 - Terminal panes now follow the app theme: background, foreground, and the ANSI 0–15 palette are injected from the selected theme and apply live — including to terminals that are already running.
 - Swap the terminal emulator core from `vt100` to `alacritty_terminal` (the same core Zed embeds), so apps like opencode and codex run against a battle-tested xterm implementation.
 - Answer OSC 10/11/4 color queries from the emulator itself at query time, replying with the exact colors the pane renders — opencode now detects the dark background on startup and picks its dark theme instead of a broken fallback.

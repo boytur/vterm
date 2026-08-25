@@ -27,6 +27,8 @@ impl Render for DragDirPreview {
 
 pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> impl IntoElement {
     let theme = &workspace.state.theme;
+    let dir_drop_target = workspace.dir_drop_target;
+    let dir_count = workspace.state.workspaces.len();
 
     div()
         .w_48()
@@ -56,8 +58,12 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                         .enumerate()
                         .map(|(i, ws)| {
                             let is_active = i == workspace.state.active_workspace;
+                            let show_indicator = dir_drop_target == Some(i);
+                            let accent = theme.accent;
                             let bg = if is_active {
                                 theme.bg_tab_inactive
+                            } else if show_indicator {
+                                Rgba { a: 0.25, ..accent }
                             } else {
                                 theme.bg_sidebar
                             };
@@ -71,12 +77,23 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                 .p_2()
                                 .rounded_md()
                                 .bg(bg)
+                                .border_1()
+                                .border_color(if show_indicator {
+                                    accent
+                                } else {
+                                    theme.border
+                                })
                                 .flex()
                                 .justify_between()
                                 .items_center()
                                 .text_color(theme.text_primary)
-                                .hover(|s| s.bg(theme.bg_tab_inactive))
+                                .when(!show_indicator, |el| {
+                                    el.hover(|s| s.bg(theme.bg_tab_inactive))
+                                })
                                 .cursor_pointer()
+                                .drag_over::<DragDir>(move |style, _, _, _| {
+                                    style.bg(Rgba { a: 0.3, ..accent }).border_color(accent)
+                                })
                                 .on_drag(DragDir(i), move |_drag_dir, _pos, _window, cx| {
                                     let drag_name = drag_name.clone();
                                     let drag_theme = drag_theme.clone();
@@ -85,9 +102,31 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                         theme: drag_theme,
                                     })
                                 })
+                                .on_drag_move(cx.listener(
+                                    move |this, event: &DragMoveEvent<DragDir>, _window, cx| {
+                                        if !event.bounds.contains(&event.event.position) {
+                                            return;
+                                        }
+                                        // Vertical list: drop above when in the top
+                                        // half, below when in the bottom half.
+                                        let insert = if event.event.position.y
+                                            < event.bounds.center().y
+                                        {
+                                            i
+                                        } else {
+                                            i + 1
+                                        };
+                                        if this.dir_drop_target != Some(insert) {
+                                            this.dir_drop_target = Some(insert);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
                                 .on_drop(cx.listener(
                                     move |this, drag_dir: &DragDir, _window, cx| {
-                                        this.move_dir(drag_dir.0, i, cx);
+                                        let to = this.dir_drop_target.unwrap_or(i);
+                                        this.dir_drop_target = None;
+                                        this.move_dir(drag_dir.0, to, cx);
                                     },
                                 ))
                                 .on_mouse_down(
@@ -135,8 +174,9 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                         }),
                 ),
         )
-        .child(
+        .child({
             // Add new dir button
+            let accent = theme.accent;
             div()
                 .id("add-workspace")
                 .w_full()
@@ -144,15 +184,40 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .mt_2()
                 .rounded_md()
                 .border_1()
-                .border_color(theme.border)
-                .hover(|s| s.bg(theme.bg_tab_inactive))
+                .border_color(if dir_drop_target == Some(dir_count) {
+                    accent
+                } else {
+                    theme.border
+                })
+                .bg(if dir_drop_target == Some(dir_count) {
+                    Rgba { a: 0.3, ..accent }
+                } else {
+                    theme.bg_sidebar
+                })
+                .when(dir_drop_target != Some(dir_count), |el| {
+                    el.hover(|s| s.bg(theme.bg_tab_inactive))
+                })
                 .cursor_pointer()
+                .drag_over::<DragDir>(move |style, _, _, _| {
+                    style.bg(Rgba { a: 0.3, ..accent }).border_color(accent)
+                })
+                .on_drag_move(cx.listener(
+                    move |this, event: &DragMoveEvent<DragDir>, _window, cx| {
+                        if !event.bounds.contains(&event.event.position) {
+                            return;
+                        }
+                        if this.dir_drop_target != Some(dir_count) {
+                            this.dir_drop_target = Some(dir_count);
+                            cx.notify();
+                        }
+                    },
+                ))
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     this.add_dir(window, cx);
                 }))
                 .flex()
                 .justify_center()
                 .text_color(theme.text_muted)
-                .child("+ Add Workspace"),
-        )
+                .child("+ Add Workspace")
+        })
 }
