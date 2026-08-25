@@ -105,7 +105,8 @@ impl Workspace {
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut state = AppState::new();
-        let (rows, cols) = Self::terminal_size(window.viewport_size(), state.font_size);
+        let (rows, cols) =
+            Self::terminal_size_for_window(window.viewport_size(), state.font_size, window);
         let mut state_changed = false;
         let terminal_colors = theme_terminal_colors(&state.theme);
         let mut terminals = Vec::new();
@@ -169,12 +170,45 @@ impl Workspace {
         this
     }
 
-    pub(crate) fn terminal_size(viewport: Size<Pixels>, font_size: f32) -> (u16, u16) {
-        let cell_w = font_size * (8.4 / 14.0);
+    pub(crate) fn terminal_cell_width(window: &Window, font_size: f32) -> f32 {
+        Self::terminal_cell_width_from_text_system(window.text_system(), font_size)
+    }
+
+    fn terminal_cell_width_from_app(cx: &App, font_size: f32) -> f32 {
+        Self::terminal_cell_width_from_text_system(cx.text_system(), font_size)
+    }
+
+    fn terminal_cell_width_from_text_system(
+        text_system: &gpui::TextSystem,
+        font_size: f32,
+    ) -> f32 {
+        let font_id = text_system.resolve_font(&font("Menlo"));
+        text_system
+            .ch_advance(font_id, px(font_size))
+            .map(f32::from)
+            .unwrap_or(font_size * (8.4 / 14.0))
+    }
+
+    pub(crate) fn terminal_size_for_window(
+        viewport: Size<Pixels>,
+        font_size: f32,
+        window: &Window,
+    ) -> (u16, u16) {
+        Self::terminal_size_with_cell_width(
+            viewport,
+            font_size,
+            Self::terminal_cell_width(window, font_size),
+        )
+    }
+
+    fn terminal_size_with_cell_width(
+        viewport: Size<Pixels>,
+        font_size: f32,
+        cell_w: f32,
+    ) -> (u16, u16) {
         let cell_h = font_size * (20.0 / 14.0);
-        let cols =
-            ((f32::from(viewport.width) - SIDEBAR_WIDTH - PANE_PAD * 2.0) / cell_w).max(10.0)
-                as u16;
+        let cols = ((f32::from(viewport.width) - SIDEBAR_WIDTH - PANE_PAD * 2.0) / cell_w)
+            .max(10.0) as u16;
         let rows =
             ((f32::from(viewport.height) - TITLE_BAR_HEIGHT - TAB_BAR_HEIGHT - PANE_PAD * 2.0)
                 / cell_h)
@@ -530,7 +564,11 @@ impl Workspace {
         let name = "Workspace".to_string();
 
         let cwd = self.get_active_terminal_cwd(cx);
-        let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
+        let (rows, cols) = Self::terminal_size_for_window(
+            window.viewport_size(),
+            self.state.font_size,
+            window,
+        );
         let colors = self.terminal_colors.clone();
         let term =
             cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
@@ -615,7 +653,7 @@ impl Workspace {
 
     pub fn cell_at(&self, pos: gpui::Point<gpui::Pixels>, cx: &App) -> (u16, u16) {
         let font_size = self.state.font_size;
-        let cell_w = font_size * (8.4 / 14.0);
+        let cell_w = Self::terminal_cell_width_from_app(cx, font_size);
         let cell_h = font_size * (20.0 / 14.0);
         let (rows, cols) = self.active_screen_size(cx);
         let origin_x = SIDEBAR_WIDTH + PANE_PAD;
@@ -674,11 +712,23 @@ impl Workspace {
         }
     }
 
+    fn write_active_text(&mut self, text: &str, cx: &mut App) {
+        let ws_idx = self.state.active_workspace;
+        if let Some(ws) = self.state.workspaces.get(ws_idx)
+            && let Some(term) = self
+                .terminals
+                .get(ws_idx)
+                .and_then(|t| t.get(ws.active_term))
+        {
+            term.update(cx, |term, _| term.write_text(text));
+        }
+    }
+
     pub fn paste_clipboard(&mut self, cx: &mut App) {
         if let Some(item) = cx.read_from_clipboard()
             && let Some(text) = item.text()
         {
-            self.write_active(text.as_bytes(), cx);
+            self.write_active_text(&text, cx);
         }
     }
 
@@ -1079,7 +1129,11 @@ impl Workspace {
         let cwd = self.get_active_terminal_cwd(cx);
         let name = "Terminal".to_string();
 
-        let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
+        let (rows, cols) = Self::terminal_size_for_window(
+            window.viewport_size(),
+            self.state.font_size,
+            window,
+        );
         let colors = self.terminal_colors.clone();
         let term =
             cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
@@ -1193,7 +1247,7 @@ impl EntityInputHandler for Workspace {
     ) {
         self.ime_composition.clear();
         if !text.is_empty() {
-            self.write_active(text.as_bytes(), cx);
+            self.write_active_text(text, cx);
         }
         cx.notify();
     }
@@ -1215,12 +1269,12 @@ impl EntityInputHandler for Workspace {
         &mut self,
         _range_utf16: Range<usize>,
         element_bounds: Bounds<Pixels>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let (row, col) = self.active_cursor(cx)?;
         let font_size = self.state.font_size;
-        let cell_w = font_size * (8.4 / 14.0);
+        let cell_w = Self::terminal_cell_width(window, font_size);
         let cell_h = font_size * (20.0 / 14.0);
         Some(Bounds::new(
             element_bounds.origin

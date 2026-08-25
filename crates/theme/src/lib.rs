@@ -101,6 +101,20 @@ impl Theme {
             .join(" ")
     }
 
+    pub fn is_dark(name: &str) -> bool {
+        !matches!(
+            name,
+            "light"
+                | "paper"
+                | "lavender"
+                | "sand"
+                | "one_light"
+                | "vscode_light_plus"
+                | "vscode_quiet_light"
+                | "solarized_light"
+        )
+    }
+
     #[allow(dead_code)]
     pub fn light() -> Self {
         Self {
@@ -792,6 +806,8 @@ mod tests {
         assert!(themes.iter().any(|(name, _)| *name == "paper"));
         assert!(themes.iter().any(|(name, _)| *name == "vscode_abyss"));
         assert_eq!(Theme::display_name("vscode_dark_plus"), "VS Code Dark Plus");
+        assert!(!Theme::is_dark("vscode_light_plus"));
+        assert!(Theme::is_dark("zed_dark"));
 
         let names: Vec<_> = themes
             .iter()
