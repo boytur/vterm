@@ -11,6 +11,15 @@ use std::ops::Range;
 use terminal::PtyTerminal;
 use ui::{button::button, modal::modal_overlay, text_input::TextField};
 
+// Layout constants that must match the real UI chrome. The terminal pane sits
+// right of the sidebar (w_64 = 256px in gpui rem units) and below the title bar
+// (h(px(32.0))) + tab bar (h(px(32.0))), with px_4() (16px) padding on every
+// side.
+const SIDEBAR_WIDTH: f32 = 256.0;
+const TITLE_BAR_HEIGHT: f32 = 32.0;
+const TAB_BAR_HEIGHT: f32 = 32.0;
+const PANE_PAD: f32 = 16.0;
+
 fn process_cwd(pid: u32) -> Option<String> {
     let child_pids = std::process::Command::new("pgrep")
         .args(["-P", &pid.to_string()])
@@ -163,8 +172,13 @@ impl Workspace {
     pub(crate) fn terminal_size(viewport: Size<Pixels>, font_size: f32) -> (u16, u16) {
         let cell_w = font_size * (8.4 / 14.0);
         let cell_h = font_size * (20.0 / 14.0);
-        let cols = ((f32::from(viewport.width) - 192.0 - 32.0) / cell_w).max(10.0) as u16;
-        let rows = ((f32::from(viewport.height) - 64.0 - 32.0) / cell_h).max(10.0) as u16;
+        let cols =
+            ((f32::from(viewport.width) - SIDEBAR_WIDTH - PANE_PAD * 2.0) / cell_w).max(10.0)
+                as u16;
+        let rows =
+            ((f32::from(viewport.height) - TITLE_BAR_HEIGHT - TAB_BAR_HEIGHT - PANE_PAD * 2.0)
+                / cell_h)
+                .max(10.0) as u16;
         (rows, cols)
     }
 
@@ -604,8 +618,8 @@ impl Workspace {
         let cell_w = font_size * (8.4 / 14.0);
         let cell_h = font_size * (20.0 / 14.0);
         let (rows, cols) = self.active_screen_size(cx);
-        let origin_x = 192.0 + 16.0;
-        let origin_y = 64.0 + 16.0;
+        let origin_x = SIDEBAR_WIDTH + PANE_PAD;
+        let origin_y = TITLE_BAR_HEIGHT + TAB_BAR_HEIGHT + PANE_PAD;
         let col = (((f32::from(pos.x) - origin_x) / cell_w).floor()).clamp(0.0, (cols as f32) - 1.0)
             as u16;
         let row = (((f32::from(pos.y) - origin_y) / cell_h).floor()).clamp(0.0, (rows as f32) - 1.0)
@@ -1212,7 +1226,7 @@ impl EntityInputHandler for Workspace {
             element_bounds.origin
                 + point(
                     px(16.0 + col as f32 * cell_w),
-                    px(16.0 + row as f32 * cell_h),
+                    px(16.0 + 3.0 + row as f32 * cell_h),
                 ),
             size(px(cell_w), px(cell_h)),
         ))
