@@ -1,0 +1,75 @@
+name: Bump Version on Merge
+
+# Auto-version the workspace when a feature/fix PR lands on master.
+#   feat/*  -> bump MINOR (and reset PATCH)
+#   fix/*   -> bump PATCH
+# Anything else (chore/, docs/, refactor/, ...) is skipped.
+# The new version is written to [workspace.package] in the root Cargo.toml
+# (all crates inherit it via version.workspace = true), committed to master,
+# and tagged vX.Y.Z. Tagging master triggers "CD - Build Prod (macOS)" to
+# build and publish the release, after which the changelog PR is prepared.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    # Only act when the PR was actually merged, not just closed.
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve bump type from source branch
+        id: bump
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          echo "Merged source branch: $HEAD_REF"
+          case "$HEAD_REF" in
+            feat/*) echo "type=minor" >> "$GITHUB_OUTPUT" ;;
+            fix/*)  echo "type=patch" >> "$GITHUB_OUTPUT" ;;
+            *)      echo "type=none"  >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Bump workspace version and tag release
+        if: steps.bump.outputs.type != 'none'
+        env:
+          BUMP: ${{ steps.bump.outputs.type }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          CUR="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          echo "Current version: $CUR"
+          IFS=. read -r MAJOR MINOR PATCH <<< "$CUR"
+          case "$BUMP" in
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEW="$MAJOR.$MINOR.$PATCH"
+          echo "New version: $NEW"
+
+          sed -i "s/^version = \"[0-9][0-9.]*\"/version = \"$NEW\"/" Cargo.toml
+          grep -n '^version =' Cargo.toml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          git commit -m "chore(release): bump version to $NEW ($BUMP via #$PR_NUMBER)
+
+$PR_TITLE"
+          git tag "v$NEW"
+          git push origin master
+          git push origin "v$NEW"
