@@ -1,48 +1,54 @@
 use crate::workspace::Workspace;
 use gpui::prelude::*;
 use gpui::*;
+use terminal::{palette_rgb, CellColor, TermCell};
 
-// Fixed xterm-standard palette. Deliberately NOT derived from the app theme:
-// recoloring these per-theme makes CLI tools (codex, opencode, vim, etc.)
-// render with mismatched colors whenever the user switches themes.
-const STANDARD_ANSI: [u32; 16] = [
-    0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, //
-    0x7f7f7f, 0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
-];
+// Colors resolve through the `terminal` crate's shared TerminalColors handle
+// so OSC 10/11/4 color-query replies are guaranteed to match what this
+// renderer paints — including live theme switches.
 
-// The terminal surface stays dark regardless of the app theme. CLI default
-// palettes assume a dark background, and color probes from apps running
-// under the screen wrapper never reach us, so a light pane would leave them
-// rendering unreadable light-on-light fallbacks.
-const TERMINAL_BG: u32 = 0x0d0d0d;
-const TERMINAL_FG: u32 = 0xe8e8e8;
+fn channels_to_u32([r, g, b]: [u8; 3]) -> u32 {
+    (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
 
-fn vt100_color_to_gpui(color: &terminal::vt100::Color, default_color: Hsla) -> Hsla {
+struct Palette {
+    fg: u32,
+    bg: u32,
+    ansi: [u32; 16],
+}
+
+impl Palette {
+    fn from_channels((fg, bg, ansi): ([u8; 3], [u8; 3], [[u8; 3]; 16])) -> Self {
+        Self {
+            fg: channels_to_u32(fg),
+            bg: channels_to_u32(bg),
+            ansi: ansi.map(channels_to_u32),
+        }
+    }
+}
+
+fn cell_color_to_gpui(color: &CellColor, default_color: Hsla, pal: &Palette) -> Hsla {
     match color {
-        terminal::vt100::Color::Default => default_color,
-        terminal::vt100::Color::Rgb(r, g, b) => {
+        CellColor::Foreground => gpui::rgb(pal.fg).into(),
+        CellColor::Background => default_color,
+        CellColor::Rgb([r, g, b]) => {
             gpui::rgb((*r as u32) << 16 | (*g as u32) << 8 | (*b as u32)).into()
         }
-        terminal::vt100::Color::Idx(idx) => {
-            match idx {
-                0..=15 => gpui::rgb(STANDARD_ANSI[*idx as usize]).into(),
-                16..=231 => {
-                    // 216 colors
-                    let mut i = *idx - 16;
-                    let b = (i % 6) * 51;
-                    i /= 6;
-                    let g = (i % 6) * 51;
-                    i /= 6;
-                    let r = (i % 6) * 51;
-                    gpui::rgb((r as u32) << 16 | (g as u32) << 8 | (b as u32)).into()
-                }
-                232..=255 => {
-                    // Grayscale
-                    let v = (*idx - 232) * 11 + 8;
-                    gpui::rgb((v as u32) << 16 | (v as u32) << 8 | (v as u32)).into()
-                }
-            }
-        }
+        CellColor::Palette(idx) if (*idx as usize) < 16 => gpui::rgb(pal.ansi[*idx as usize]).into(),
+        // Single source of truth with the OSC responder for cube/grayscale.
+        CellColor::Palette(idx) => match palette_rgb(*idx as usize) {
+            Some([r, g, b]) => gpui::rgb((r as u32) << 16 | (g as u32) << 8 | b as u32).into(),
+            None => default_color,
+        },
+    }
+}
+
+fn cell_contents(cell: Option<&TermCell>) -> String {
+    // Blank cells become a non-breaking space so the monospace grid keeps
+    // its alignment through text runs.
+    match cell {
+        Some(cell) if !cell.wide_spacer && cell.ch != ' ' => cell.ch.to_string(),
+        _ => "\u{00A0}".to_string(),
     }
 }
 
@@ -59,6 +65,8 @@ pub fn render_terminal_view(
     let mut selection_overlay = div();
     let mut scrollbar_element = div();
     let mut ime_composition_overlay = div();
+    // Fallback for frames with no active terminal: the built-in dark palette.
+    let mut pal = Palette::from_channels(terminal::TerminalColors::dark().get());
 
     if let Some(ws) = workspace
         .state
@@ -69,11 +77,12 @@ pub fn render_terminal_view(
             .get(workspace.state.active_workspace)
             .and_then(|t| t.get(ws.active_term))
     {
-        let (rows_count, cols_count) = {
-            let term = term_model.read(cx);
-            let parser = term.parser.lock().unwrap();
-            parser.screen().size()
-        };
+        let term = term_model.read(cx);
+        let snap = term.snapshot();
+        pal = Palette::from_channels(term.colors.get());
+
+        let rows_count = snap.rows;
+        let cols_count = snap.cols;
 
         let cell_w = font_size * (8.4 / 14.0);
         let cell_h = font_size * (20.0 / 14.0);
@@ -89,32 +98,10 @@ pub fn render_terminal_view(
             });
         }
 
-        let term = term_model.read(cx);
-        let parser = term.parser.lock().unwrap();
-        let screen = parser.screen();
-        let cursor = screen.cursor_position();
-        drop(parser); // release lock so we can call scroll_info on term_model
-
-        let (current_offset, max_offset) = term_model.read(cx).scroll_info();
+        let (current_offset, max_offset) = (snap.offset, snap.history);
         // The live cursor only exists on the bottom view; while scrolled into
-        // history it would highlight an arbitrary historical cell.
-        let show_cursor = current_offset == 0;
-        if show_cursor && !workspace.ime_composition.is_empty() {
-            let (row, col) = cursor;
-            ime_composition_overlay = div()
-                .absolute()
-                .left(px(16.0 + col as f32 * cell_w))
-                .top(px(16.0 + row as f32 * cell_h))
-                .min_w(px(cell_w))
-                .h(px(cell_h))
-                .px(px(1.0))
-                .bg(theme.bg_main)
-                .border_b_1()
-                .border_color(gpui::rgb(0x66ccff))
-                .text_color(gpui::rgb(0xffffff))
-                .whitespace_nowrap()
-                .child(workspace.ime_composition.clone());
-        }
+        // history it would highlight an arbitrary historical cell. The
+        // snapshot already drops it there.
         if max_offset > 0 {
             let total_lines = max_offset as f32 + rows_count as f32;
             let visible_ratio = rows_count as f32 / total_lines;
@@ -143,12 +130,26 @@ pub fn render_terminal_view(
                 );
         }
 
-        let parser = term.parser.lock().unwrap();
-        let screen = parser.screen();
+        if let Some((cursor_row, cursor_col)) = snap.cursor
+            && !workspace.ime_composition.is_empty()
+        {
+            ime_composition_overlay = div()
+                .absolute()
+                .left(px(16.0 + cursor_col as f32 * cell_w))
+                .top(px(16.0 + cursor_row as f32 * cell_h))
+                .min_w(px(cell_w))
+                .h(px(cell_h))
+                .px(px(1.0))
+                .bg(theme.bg_main)
+                .border_b_1()
+                .border_color(gpui::rgb(0x66ccff))
+                .text_color(gpui::rgb(0xffffff))
+                .whitespace_nowrap()
+                .child(workspace.ime_composition.clone());
+        }
 
         if let Some(sel) = workspace.selection {
-            let (c1, r1) = sel.0;
-            let (c2, r2) = sel.1;
+            let ((c1, r1), (c2, r2)) = sel;
             let min_c = c1.min(c2);
             let max_c = c1.max(c2);
             let min_r = r1.min(r2);
@@ -176,28 +177,28 @@ pub fn render_terminal_view(
             let mut line_children = Vec::new();
 
             let mut current_text = String::new();
-            let mut current_fg = terminal::vt100::Color::Default;
-            let mut current_bg = terminal::vt100::Color::Default;
+            let mut current_fg = CellColor::Foreground;
+            let mut current_bg = CellColor::Background;
             let mut current_bold = false;
             let mut current_inverse = false;
 
             let mut flush = |text: &mut String,
-                             fg: terminal::vt100::Color,
-                             bg: terminal::vt100::Color,
+                             fg: CellColor,
+                             bg: CellColor,
                              bold: bool,
                              inv: bool| {
                 if !text.is_empty() {
-                    let fg_base = vt100_color_to_gpui(&fg, gpui::rgb(TERMINAL_FG).into());
-                    let bg_base = vt100_color_to_gpui(&bg, gpui::transparent_black());
+                    let fg_base = cell_color_to_gpui(&fg, gpui::rgb(pal.fg).into(), &pal);
+                    let bg_base = cell_color_to_gpui(&bg, gpui::transparent_black(), &pal);
 
                     let (final_fg, final_bg) = if inv {
-                        let inv_fg = if bg == terminal::vt100::Color::Default {
-                            gpui::rgb(TERMINAL_BG).into()
+                        let inv_fg = if bg == CellColor::Background {
+                            gpui::rgb(pal.bg).into()
                         } else {
                             bg_base
                         };
-                        let inv_bg = if fg == terminal::vt100::Color::Default {
-                            gpui::rgb(TERMINAL_FG).into()
+                        let inv_bg = if fg == CellColor::Foreground {
+                            gpui::rgb(pal.fg).into()
                         } else {
                             fg_base
                         };
@@ -221,7 +222,7 @@ pub fn render_terminal_view(
                         let create_el = || {
                             let mut base =
                                 div().whitespace_nowrap().text_color(final_fg).px(px(0.5));
-                            if bg != terminal::vt100::Color::Default || inv {
+                            if bg != CellColor::Background || inv {
                                 base = base.bg(final_bg);
                             }
                             if bold {
@@ -269,32 +270,20 @@ pub fn render_terminal_view(
             };
 
             for c in 0..cols_count {
-                let is_cursor =
-                    show_cursor && cursor.0 == r && cursor.1 == c && !screen.hide_cursor();
+                let is_cursor = snap.cursor == Some((r, c));
 
-                let (fg, bg, bold, mut inv, contents) = match screen.cell(r, c) {
-                    Some(cell) => {
-                        let text = if cell.has_contents() {
-                            let c_text = cell.contents();
-                            if c_text.is_empty() {
-                                "\u{00A0}".to_string()
-                            } else {
-                                c_text.replace(" ", "\u{00A0}")
-                            }
-                        } else {
-                            "\u{00A0}".to_string()
-                        };
-                        (
-                            cell.fgcolor(),
-                            cell.bgcolor(),
-                            cell.bold(),
-                            cell.inverse(),
-                            text,
-                        )
-                    }
-                    None => (
-                        terminal::vt100::Color::Default,
-                        terminal::vt100::Color::Default,
+                let cell = snap.cell(r, c);
+                let (fg, bg, bold, mut inv, contents) = match cell {
+                    Some(cell) if !cell.wide_spacer => (
+                        cell.fg,
+                        cell.bg,
+                        cell.bold,
+                        cell.inverse,
+                        cell_contents(Some(cell)),
+                    ),
+                    _ => (
+                        CellColor::Foreground,
+                        CellColor::Background,
                         false,
                         false,
                         "\u{00A0}".to_string(),
@@ -353,7 +342,7 @@ pub fn render_terminal_view(
         .relative()
         .w_full()
         .h_full()
-        .bg(gpui::rgb(TERMINAL_BG))
+        .bg(gpui::rgb(pal.bg))
         .px_4()
         .pt_4()
         .pb_4()
