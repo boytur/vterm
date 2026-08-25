@@ -1602,19 +1602,39 @@ impl Render for Workspace {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
-                        .relative()
-                        .child(self.branch_search.render(theme))
-                        .when(self.branch_search.value().is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .absolute()
-                                    .left(px(10.0))
-                                    .top(px(10.0))
-                                    .text_color(theme.text_muted)
-                                    .text_size(px(12.0))
-                                    .child("Search branches…"),
-                            )
-                        }),
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .w(px(16.0))
+                                .h(px(16.0))
+                                .flex_shrink_0()
+                                .child(
+                                    gpui::svg()
+                                        .path("icons/search.svg")
+                                        .text_color(theme.text_muted)
+                                        .size(px(16.0)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .relative()
+                                .flex_1()
+                                .child(self.branch_search.render(theme))
+                                .when(self.branch_search.value().is_empty(), |el| {
+                                    el.child(
+                                        div()
+                                            .absolute()
+                                            .left(px(10.0))
+                                            .top(px(10.0))
+                                            .text_color(theme.text_muted)
+                                            .text_size(px(12.0))
+                                            .child("Search branches…"),
+                                    )
+                                }),
+                        ),
                 )
                 .child(
                     div()

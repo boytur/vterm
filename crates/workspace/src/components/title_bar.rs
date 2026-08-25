@@ -73,6 +73,7 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
 
     div()
         .id("title-bar")
+        .relative()
         .w_full()
         .h(px(32.0))
         .bg(theme.bg_sidebar)
@@ -84,13 +85,21 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
         .pr(px(16.0))
         .border_b_1()
         .border_color(theme.border)
-        .on_mouse_down(MouseButton::Left, |event, window, _cx| {
-            if event.click_count == 2 {
-                window.zoom_window();
-            } else {
-                window.start_window_move();
-            }
-        })
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .on_mouse_down(MouseButton::Left, |event, window, _cx| {
+                    if event.click_count == 2 {
+                        window.zoom_window();
+                    } else {
+                        window.start_window_move();
+                    }
+                }),
+        )
         .child(
             div()
                 .flex()
