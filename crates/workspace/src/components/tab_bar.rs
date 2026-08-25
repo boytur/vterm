@@ -52,16 +52,6 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .map(|(i, term)| {
                     let is_active = i
                         == workspace.state.workspaces[workspace.state.active_workspace].active_term;
-                    let bg = if is_active {
-                        theme.bg_tab_active
-                    } else {
-                        theme.bg_tab_inactive
-                    };
-                    let border = if is_active {
-                        theme.accent
-                    } else {
-                        theme.bg_tab_inactive
-                    };
                     let text_col = if is_active {
                         theme.text_primary
                     } else {
@@ -71,6 +61,22 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                     let drag_term = term.name.clone();
                     let drag_theme = theme.clone();
                     let show_indicator = drop_target == Some(i);
+                    let accent = theme.accent;
+
+                    let bg = if is_active {
+                        theme.bg_tab_active
+                    } else if show_indicator {
+                        Rgba { a: 0.25, ..accent }
+                    } else {
+                        theme.bg_tab_inactive
+                    };
+                    let border = if is_active {
+                        accent
+                    } else if show_indicator {
+                        accent
+                    } else {
+                        theme.bg_tab_inactive
+                    };
 
                     div()
                         .id(("tab", i))
@@ -84,10 +90,12 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                         .border_t_2()
                         .border_color(border)
                         .text_color(text_col)
-                        .hover(|s| s.bg(theme.bg_tab_inactive))
+                        .when(!show_indicator, |el| {
+                            el.hover(|s| s.bg(theme.bg_tab_inactive))
+                        })
                         .cursor_pointer()
-                        .drag_over::<DragTab>(|style, _, _, _| {
-                            style.bg(gpui::black().opacity(0.15))
+                        .drag_over::<DragTab>(move |style, _, _, _| {
+                            style.bg(Rgba { a: 0.3, ..accent }).border_color(accent)
                         })
                         .on_drag(DragTab(i), move |_drag_tab, _pos, _window, cx| {
                             let drag_term = drag_term.clone();
@@ -172,8 +180,9 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                         )
                 }),
         )
-        .child(
+        .child({
             // Add new tab button
+            let accent = theme.accent;
             div()
                 .id("add-tab")
                 .relative()
@@ -183,9 +192,18 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .flex()
                 .items_center()
                 .text_color(theme.text_muted)
-                .hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+                .when(drop_target != Some(tab_count), |el| {
+                    el.hover(|s| s.bg(theme.bg_tab_inactive).text_color(theme.text_primary))
+                })
                 .cursor_pointer()
-                .drag_over::<DragTab>(|style, _, _, _| style.bg(gpui::black().opacity(0.15)))
+                .bg(if drop_target == Some(tab_count) {
+                    Rgba { a: 0.3, ..accent }
+                } else {
+                    theme.bg_tab_inactive
+                })
+                .drag_over::<DragTab>(move |style, _, _, _| {
+                    style.bg(Rgba { a: 0.3, ..accent }).border_color(accent)
+                })
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DragTab>, _window, cx| {
                         if !event.bounds.contains(&event.event.position) {
@@ -208,9 +226,9 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     this.add_term(window, cx);
                 }))
-                .child("+"),
-        )
-}
+                .child("+")
+        })
+    }
 
 fn drop_indicator(theme: &Theme) -> impl IntoElement {
     div()
