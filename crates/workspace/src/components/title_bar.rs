@@ -60,7 +60,12 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                             .size(px(14.0)),
                     ),
             )
-            .child(workspace.git_branch.clone())
+            .child(
+                div()
+                    .max_w(px(240.0))
+                    .truncate()
+                    .child(workspace.git_branch.clone()),
+            )
     };
 
     div()
