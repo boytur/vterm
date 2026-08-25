@@ -5,6 +5,8 @@ All notable changes to vterm are documented here.
 ## [Unreleased]
 
 - Enable GitHub Actions to create and approve pull requests so the release changelog automation works again.
+- Add native Unicode and IME input handling for Thai, Arabic, Latin, and other composed text.
+- Preserve combining-character deletion in macOS terminal sessions.
 
 ## [0.3.1] - 2026-08-24
 

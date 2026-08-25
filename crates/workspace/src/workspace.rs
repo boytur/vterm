@@ -6,6 +6,7 @@ use crate::components::title_bar::render_title_bar;
 use crate::state::AppState;
 use gpui::prelude::*;
 use gpui::*;
+use std::ops::Range;
 
 use terminal::PtyTerminal;
 use ui::{button::button, modal::modal_overlay, text_input::TextField};
@@ -65,6 +66,7 @@ pub struct Workspace {
     pub update_staged: Option<std::path::PathBuf>,
     pub update_installing: bool,
     pub update_error: Option<String>,
+    pub ime_composition: String,
 }
 
 impl Workspace {
@@ -129,6 +131,7 @@ impl Workspace {
             update_staged: None,
             update_installing: false,
             update_error: None,
+            ime_composition: String::new(),
         };
 
         this.poll_git_branch(cx);
@@ -565,6 +568,14 @@ impl Workspace {
         (24, 80)
     }
 
+    fn active_cursor(&self, cx: &App) -> Option<(u16, u16)> {
+        let ws_idx = self.state.active_workspace;
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let term = self.terminals.get(ws_idx)?.get(ws.active_term)?.read(cx);
+        let parser = term.parser.lock().unwrap();
+        Some(parser.screen().cursor_position())
+    }
+
     pub fn cell_at(&self, pos: gpui::Point<gpui::Pixels>, cx: &App) -> (u16, u16) {
         let font_size = self.state.font_size;
         let cell_w = font_size * (8.4 / 14.0);
@@ -885,19 +896,12 @@ impl Workspace {
                     "right" => vec![0x1b, b'[', b'C'],
                     "left" => vec![0x1b, b'[', b'D'],
                     "space" => vec![b' '],
-                    _ if key.chars().count() == 1 => {
+                    _ if modifiers.control && key.chars().count() == 1 => {
                         let c = key.chars().next().unwrap();
-                        let mut b = vec![0; c.len_utf8()];
-                        c.encode_utf8(&mut b);
-                        if modifiers.control && c.is_ascii_lowercase() {
+                        if c.is_ascii_lowercase() {
                             vec![(c as u8) - b'a' + 1]
-                        } else if modifiers.shift {
-                            let upper = c.to_ascii_uppercase();
-                            let mut b2 = vec![0; upper.len_utf8()];
-                            upper.encode_utf8(&mut b2);
-                            b2
                         } else {
-                            b
+                            vec![]
                         }
                     }
                     _ => vec![],
@@ -1061,6 +1065,146 @@ impl Workspace {
             self.renaming_dir_modal = Some((idx, TextField::new(ws.name.clone())));
             cx.notify();
         }
+    }
+}
+
+fn utf16_len(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+fn utf16_to_byte_offset(text: &str, offset: usize) -> usize {
+    if offset == 0 {
+        return 0;
+    }
+
+    let mut utf16_offset = 0;
+    for (byte_offset, character) in text.char_indices() {
+        utf16_offset += character.len_utf16();
+        if offset <= utf16_offset {
+            return byte_offset + character.len_utf8();
+        }
+    }
+    text.len()
+}
+
+impl EntityInputHandler for Workspace {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        if self.ime_composition.is_empty() {
+            return None;
+        }
+        let length = utf16_len(&self.ime_composition);
+        let start = range.start.min(length);
+        let end = range.end.min(length);
+        *adjusted_range = Some(start..end);
+        Some(
+            self.ime_composition[utf16_to_byte_offset(&self.ime_composition, start)
+                ..utf16_to_byte_offset(&self.ime_composition, end)]
+                .to_string(),
+        )
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let caret = utf16_len(&self.ime_composition);
+        Some(UTF16Selection {
+            range: caret..caret,
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        (!self.ime_composition.is_empty()).then(|| 0..utf16_len(&self.ime_composition))
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.ime_composition.clear();
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ime_composition.clear();
+        if !text.is_empty() {
+            self.write_active(text.as_bytes(), cx);
+        }
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        new_text: &str,
+        _new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ime_composition.clear();
+        self.ime_composition.push_str(new_text);
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let (row, col) = self.active_cursor(cx)?;
+        let font_size = self.state.font_size;
+        let cell_w = font_size * (8.4 / 14.0);
+        let cell_h = font_size * (20.0 / 14.0);
+        Some(Bounds::new(
+            element_bounds.origin
+                + point(
+                    px(16.0 + col as f32 * cell_w),
+                    px(16.0 + row as f32 * cell_h),
+                ),
+            size(px(cell_w), px(cell_h)),
+        ))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::utf16_to_byte_offset;
+
+    #[test]
+    fn utf16_offsets_handle_multibyte_and_surrogate_characters() {
+        let text = "Aส🙂";
+        assert_eq!(utf16_to_byte_offset(text, 0), 0);
+        assert_eq!(utf16_to_byte_offset(text, 1), 1);
+        assert_eq!(utf16_to_byte_offset(text, 2), 4);
+        assert_eq!(utf16_to_byte_offset(text, 4), 8);
+        assert_eq!(utf16_to_byte_offset(text, 9), 8);
     }
 }
 impl Render for Workspace {
