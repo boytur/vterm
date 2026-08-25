@@ -1599,12 +1599,27 @@ impl Render for Workspace {
                                 this.checkout_branch(&b, cx);
                             }),
                         )
+                        .child(
+                            div()
+                                .w(px(14.0))
+                                .h(px(14.0))
+                                .child(
+                                    gpui::svg()
+                                        .path("icons/git_branch.svg")
+                                        .text_color(if is_active {
+                                            theme.accent
+                                        } else {
+                                            theme.text_muted
+                                        })
+                                        .size(px(14.0)),
+                                ),
+                        )
+                        .child(div().flex_1().child(branch.clone()))
                         .child(if is_active {
                             div().w(px(12.0)).child("✓")
                         } else {
                             div().w(px(12.0))
-                        })
-                        .child(branch.clone()),
+                        }),
                 );
             }
             let backdrop = div()
