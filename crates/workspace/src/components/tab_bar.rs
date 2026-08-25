@@ -70,12 +70,10 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                     } else {
                         theme.bg_tab_inactive
                     };
-                    let border = if is_active {
-                        accent
-                    } else if show_indicator {
+                    let border = if is_active || show_indicator {
                         accent
                     } else {
-                        theme.bg_tab_inactive
+                        Rgba { a: 0.0, ..accent }
                     };
 
                     div()

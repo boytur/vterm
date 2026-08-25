@@ -81,7 +81,7 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                 .border_color(if show_indicator {
                                     accent
                                 } else {
-                                    theme.border
+                                    Rgba { a: 0.0, ..accent }
                                 })
                                 .flex()
                                 .justify_between()
@@ -187,7 +187,7 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 .border_color(if dir_drop_target == Some(dir_count) {
                     accent
                 } else {
-                    theme.border
+                    Rgba { a: 0.0, ..accent }
                 })
                 .bg(if dir_drop_target == Some(dir_count) {
                     Rgba { a: 0.3, ..accent }
