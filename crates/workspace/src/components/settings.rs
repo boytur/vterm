@@ -129,10 +129,29 @@ fn theme_card(
 
 fn render_appearance(workspace: &Workspace, cx: &mut Context<Workspace>) -> Div {
     let theme = &workspace.state.theme;
-    let mut themes = div().flex().flex_col().gap_2();
+    let mut dark_themes = div().flex().flex_col().gap_2();
+    let mut light_themes = div().flex().flex_col().gap_2();
     for (name, factory) in Theme::builtins() {
-        themes = themes.child(theme_card(workspace, name, factory, cx));
+        if Theme::is_dark(name) {
+            dark_themes = dark_themes.child(theme_card(workspace, name, factory, cx));
+        } else {
+            light_themes = light_themes.child(theme_card(workspace, name, factory, cx));
+        }
     }
+
+    let theme_group = |label: &'static str, themes: Div| {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(theme.text_muted)
+                    .child(label),
+            )
+            .child(themes)
+    };
 
     div()
         .flex()
@@ -166,7 +185,8 @@ fn render_appearance(workspace: &Workspace, cx: &mut Context<Workspace>) -> Div 
                         .text_color(theme.text_muted)
                         .child("COLOR THEME"),
                 )
-                .child(themes),
+                .child(theme_group("DARK THEMES", dark_themes))
+                .child(theme_group("LIGHT THEMES", light_themes)),
         )
 }
 

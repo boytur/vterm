@@ -4,6 +4,14 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+- Send composed non-ASCII text through bracketed paste to prevent shell redraw artifacts.
+- Group themes into dark and light sections while keeping dark as the default.
+- Make the terminal surface and default foreground follow the selected theme.
+- Use each theme's ANSI palette for Vim, Nano, and other terminal editor highlights.
+- Prevent inherited terminal shell-integration hooks from leaking into new or resumed sessions.
+- Render box-drawing and table borders as connected GPUI line segments.
+- Keep CLI and UI colors readable when the active theme changes.
+
 ## [0.4.2] - 2026-08-25
 
 

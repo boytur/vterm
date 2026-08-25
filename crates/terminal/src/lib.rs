@@ -7,7 +7,7 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::vte::ansi::{ClearMode, Handler, NamedColor, Processor, StdSyncHandler};
 use alacritty_terminal::vte::ansi::Color as AnsiColor;
 use async_channel::{Receiver, Sender};
@@ -57,9 +57,10 @@ pub fn palette_rgb(index: usize) -> Option<[u8; 3]> {
 }
 
 const ZSH_CODEPOINT_BACKSPACE: &str = r#"
+zle_highlight+=('paste:none')
 vterm_backward_delete_codepoint() {
     if (( CURSOR > 0 )); then
-        LBUFFER="${LBUFFER[1,$((CURSOR - 1))]}${LBUFFER[$((CURSOR + 1)),-1]}"
+        LBUFFER="${LBUFFER[1,-2]}"
     fi
 }
 zle -N vterm-backward-delete-codepoint vterm_backward_delete_codepoint
@@ -177,9 +178,10 @@ pub enum CellColor {
 }
 
 /// One grid cell as the renderer should paint it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TermCell {
     pub ch: char,
+    pub zero_width: Vec<char>,
     pub fg: CellColor,
     pub bg: CellColor,
     pub bold: bool,
@@ -362,6 +364,11 @@ impl PtyTerminal {
         ] {
             cmd.env_remove(foreign);
         }
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().ends_with("_SHELL_INTEGRATION") {
+                cmd.env_remove(key);
+            }
+        }
         // The terminal pane is always dark (see workspace terminal.rs), so
         // advertise that: CLIs that skip color queries (codex, vim, …) use
         // COLORFGBG to pick their dark palette. Note opencode ignores it.
@@ -487,6 +494,15 @@ impl PtyTerminal {
         self.term.lock().scroll_display(Scroll::Bottom);
     }
 
+    pub fn write_text(&mut self, text: &str) {
+        let bracketed_paste = self
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE);
+        self.write(&encode_text_input(text, bracketed_paste));
+    }
+
     /// Answers the events the emulator raised while parsing PTY output:
     /// color queries (OSC 10/11/4) with the exact colors this pane renders
     /// — app-set overrides first, our fixed palette as fallback, Zed-style
@@ -586,12 +602,17 @@ impl PtyTerminal {
         for r in r1.min(r2)..=r1.max(r2) {
             let mut line = String::new();
             for c in min_c..=max_c {
-                line.push(
+                line.push_str(&
                     snapshot
                         .cell(r, c)
                         .filter(|cell| !cell.wide_spacer)
-                        .map(|cell| cell.ch)
-                        .unwrap_or(' '),
+                        .map(|cell| {
+                            let mut text = String::new();
+                            text.push(cell.ch);
+                            text.extend(cell.zero_width.iter().copied());
+                            text
+                        })
+                        .unwrap_or_else(|| " ".to_string()),
                 );
             }
             lines.push(line);
@@ -629,6 +650,7 @@ impl PtyTerminal {
                 let wide_spacer = cell.flags.contains(Flags::WIDE_CHAR_SPACER);
                 cells.push(TermCell {
                     ch: cell.c,
+                    zero_width: cell.zerowidth().unwrap_or_default().to_vec(),
                     fg: map_color(cell.fg),
                     bg: map_color(cell.bg),
                     bold: cell.flags.contains(Flags::BOLD),
@@ -699,6 +721,18 @@ fn prepare_zsh_integration() -> Option<(PathBuf, String)> {
     }
 
     Some((config_dir, original_zdotdir))
+}
+
+fn encode_text_input(text: &str, bracketed_paste: bool) -> Vec<u8> {
+    if bracketed_paste && text.chars().any(|character| !character.is_ascii()) {
+        let mut bytes = Vec::with_capacity(text.len() + 12);
+        bytes.extend_from_slice(b"\x1b[200~");
+        bytes.extend_from_slice(text.as_bytes());
+        bytes.extend_from_slice(b"\x1b[201~");
+        bytes
+    } else {
+        text.as_bytes().to_vec()
+    }
 }
 
 fn dead_terminal(session_name: Option<String>, colors: TerminalColors) -> PtyTerminal {
@@ -899,6 +933,9 @@ pub fn fallback_color_rgb(index: usize) -> Option<[u8; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    use std::process::Command;
 
     /// Feeds raw bytes through the same parse path as the read loop.
     fn feed(term: &Arc<FairMutex<Term<EventProxy>>>, bytes: &[u8]) {
@@ -1162,5 +1199,49 @@ mod tests {
         assert_eq!(palette_rgb(232), Some([8, 8, 8]));
         assert_eq!(palette_rgb(255), Some([238, 238, 238]));
         assert_eq!(palette_rgb(256), None);
+    }
+
+    #[test]
+    fn encodes_composed_text_as_bracketed_paste() {
+        assert_eq!(
+            encode_text_input("สวัสดี", true),
+            "\x1b[200~สวัสดี\x1b[201~".as_bytes()
+        );
+        assert_eq!(encode_text_input("สวัสดี", false), "สวัสดี".as_bytes());
+        assert_eq!(encode_text_input("plain", true), b"plain");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zsh_codepoint_delete_removes_one_combining_codepoint() {
+        let script = format!(
+            r#"{ZSH_CODEPOINT_BACKSPACE}
+LBUFFER="สวัสดี"
+CURSOR=${{#LBUFFER}}
+vterm_backward_delete_codepoint
+print -r -- "$LBUFFER"
+"#
+        );
+        let output = Command::new("zsh")
+            .args(["-dfc", &script])
+            .output()
+            .expect("zsh is required for terminal input tests");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<_> = stdout.lines().collect();
+        assert_eq!(lines.last().copied(), Some("สวัสด"));
+    }
+
+    #[test]
+    fn snapshot_preserves_zero_width_text() {
+        let (term, events) = make_term(2, 20);
+        feed(&term, "สวัสดี".as_bytes());
+        let snapshot = PtyTerminal::for_testing(term, events).snapshot();
+        let row: String = (0..snapshot.cols)
+            .filter_map(|col| snapshot.cell(0, col))
+            .filter(|cell| !cell.wide_spacer)
+            .flat_map(|cell| std::iter::once(cell.ch).chain(cell.zero_width.iter().copied()))
+            .collect();
+        assert_eq!(row.trim_end(), "สวัสดี");
+        assert_eq!(snapshot.cursor, Some((0, 4)));
     }
 }

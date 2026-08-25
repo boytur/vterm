@@ -19,7 +19,7 @@ pub struct WorkspaceData {
     pub active_term: usize,
 }
 
-pub const DEFAULT_FONT_SIZE: f32 = 14.0;
+pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 #[derive(Serialize, Deserialize)]
 pub struct AppState {
