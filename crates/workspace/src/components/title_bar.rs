@@ -44,7 +44,7 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                 MouseButton::Left,
                 _cx.listener(|this, _e, _w, cx| {
                     cx.stop_propagation();
-                    this.toggle_branch_menu(cx);
+                    this.toggle_branch_menu(_w, cx);
                 }),
             )
             .child(

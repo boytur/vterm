@@ -138,7 +138,7 @@ impl Workspace {
             settings_open: false,
             settings_section: SettingsSection::Appearance,
             branch_menu_open: false,
-            branch_search: TextField::new(""),
+            branch_search: TextField::new("").with_left_pad(24.0),
             alert_modal: None,
             selection: None,
             selecting: false,
@@ -452,18 +452,20 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn toggle_branch_menu(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_branch_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.branch_menu_open = !self.branch_menu_open;
-        self.branch_search = TextField::new("");
-        if self.branch_menu_open
-            && let Some(cwd) = self.get_active_terminal_cwd(cx)
-            && let Ok(output) = std::process::Command::new("git")
-                .args(["branch", "--format=%(refname:short)"])
-                .current_dir(cwd)
-                .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+        self.branch_search = TextField::new("").with_left_pad(24.0);
+        if self.branch_menu_open {
+            window.focus(&self.focus_handle);
+            if let Some(cwd) = self.get_active_terminal_cwd(cx)
+                && let Ok(output) = std::process::Command::new("git")
+                    .args(["branch", "--format=%(refname:short)"])
+                    .current_dir(cwd)
+                    .output()
+            {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+            }
         }
         cx.notify();
     }
@@ -1602,15 +1604,15 @@ impl Render for Workspace {
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                 .child(
                     div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
+                        .relative()
+                        .child(self.branch_search.render(theme))
                         .child(
                             div()
+                                .absolute()
+                                .left(px(8.0))
+                                .top(px(8.0))
                                 .w(px(16.0))
                                 .h(px(16.0))
-                                .flex_shrink_0()
                                 .child(
                                     gpui::svg()
                                         .path("icons/search.svg")
@@ -1618,23 +1620,17 @@ impl Render for Workspace {
                                         .size(px(16.0)),
                                 ),
                         )
-                        .child(
-                            div()
-                                .relative()
-                                .flex_1()
-                                .child(self.branch_search.render(theme))
-                                .when(self.branch_search.value().is_empty(), |el| {
-                                    el.child(
-                                        div()
-                                            .absolute()
-                                            .left(px(10.0))
-                                            .top(px(10.0))
-                                            .text_color(theme.text_muted)
-                                            .text_size(px(12.0))
-                                            .child("Search branches…"),
-                                    )
-                                }),
-                        ),
+                        .when(self.branch_search.value().is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .absolute()
+                                    .left(px(24.0))
+                                    .top(px(6.0))
+                                    .text_color(theme.text_muted)
+                                    .text_size(px(12.0))
+                                    .child("Search branches…"),
+                            )
+                        }),
                 )
                 .child(
                     div()
@@ -1686,19 +1682,16 @@ impl Render for Workspace {
                                 }),
                             )
                             .child(
-                                div()
-                                    .w(px(14.0))
-                                    .h(px(14.0))
-                                    .child(
-                                        gpui::svg()
-                                            .path("icons/git_branch.svg")
-                                            .text_color(if is_active {
-                                                theme.accent
-                                            } else {
-                                                theme.text_muted
-                                            })
-                                            .size(px(14.0)),
-                                    ),
+                                div().w(px(14.0)).h(px(14.0)).child(
+                                    gpui::svg()
+                                        .path("icons/git_branch.svg")
+                                        .text_color(if is_active {
+                                            theme.accent
+                                        } else {
+                                            theme.text_muted
+                                        })
+                                        .size(px(14.0)),
+                                ),
                             )
                             .child(div().flex_1().child(branch.clone()))
                             .child(if is_active {

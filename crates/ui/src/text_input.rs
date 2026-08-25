@@ -1,4 +1,5 @@
 use gpui::*;
+use std::time::Duration;
 use theme::Theme;
 
 /// Minimal single-line editable text field with caret, selection and
@@ -11,6 +12,8 @@ pub struct TextField {
     caret: usize,
     /// Byte offset where the active selection started, if any.
     anchor: Option<usize>,
+    /// Extra left padding (px) so an icon can sit inside the box.
+    left_pad: f32,
 }
 
 impl TextField {
@@ -21,7 +24,14 @@ impl TextField {
             value,
             caret,
             anchor: None,
+            left_pad: 0.0,
         }
+    }
+
+    /// Reserve `pad` px of left padding inside the box (for an inline icon).
+    pub fn with_left_pad(mut self, pad: f32) -> Self {
+        self.left_pad = pad;
+        self
     }
 
     pub fn value(&self) -> &str {
@@ -195,7 +205,14 @@ impl TextField {
                     .w(px(1.5))
                     .h(px(14.0))
                     .flex_shrink_0()
-                    .bg(theme.text_primary),
+                    .bg(theme.text_primary)
+                    .with_animation(
+                        "text-field-caret",
+                        Animation::new(Duration::from_millis(1000))
+                            .repeat()
+                            .with_easing(|t| 0.5 + 0.5 * (t * 2.0 * std::f32::consts::PI).cos()),
+                        |el, alpha| el.opacity(alpha),
+                    ),
             );
         } else {
             row = row.child(
@@ -211,6 +228,7 @@ impl TextField {
         div()
             .w_full()
             .p_2()
+            .pl(px(self.left_pad))
             .bg(theme.bg_tab_inactive)
             .rounded_md()
             .border_1()
