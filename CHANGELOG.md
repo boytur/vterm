@@ -4,6 +4,9 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-25
+
+
 - Send composed non-ASCII text through bracketed paste to prevent shell redraw artifacts.
 - Group themes into dark and light sections while keeping dark as the default.
 - Make the terminal surface and default foreground follow the selected theme.
