@@ -1,4 +1,5 @@
 use crate::workspace::Workspace;
+use gpui::prelude::*;
 use gpui::*;
 
 // Fixed xterm-standard palette. Deliberately NOT derived from the app theme:
@@ -57,6 +58,7 @@ pub fn render_terminal_view(
     let mut lines_elements = Vec::new();
     let mut selection_overlay = div();
     let mut scrollbar_element = div();
+    let mut ime_composition_overlay = div();
 
     if let Some(ws) = workspace
         .state
@@ -97,6 +99,22 @@ pub fn render_terminal_view(
         // The live cursor only exists on the bottom view; while scrolled into
         // history it would highlight an arbitrary historical cell.
         let show_cursor = current_offset == 0;
+        if show_cursor && !workspace.ime_composition.is_empty() {
+            let (row, col) = cursor;
+            ime_composition_overlay = div()
+                .absolute()
+                .left(px(16.0 + col as f32 * cell_w))
+                .top(px(16.0 + row as f32 * cell_h))
+                .min_w(px(cell_w))
+                .h(px(cell_h))
+                .px(px(1.0))
+                .bg(theme.bg_main)
+                .border_b_1()
+                .border_color(gpui::rgb(0x66ccff))
+                .text_color(gpui::rgb(0xffffff))
+                .whitespace_nowrap()
+                .child(workspace.ime_composition.clone());
+        }
         if max_offset > 0 {
             let total_lines = max_offset as f32 + rows_count as f32;
             let visible_ratio = rows_count as f32 / total_lines;
@@ -328,6 +346,9 @@ pub fn render_terminal_view(
         }
     }
 
+    let workspace_entity = cx.entity();
+    let focus_handle = workspace.focus_handle.clone();
+
     div()
         .relative()
         .w_full()
@@ -361,4 +382,21 @@ pub fn render_terminal_view(
         .child(selection_overlay)
         .children(lines_elements)
         .child(scrollbar_element)
+        .child(ime_composition_overlay)
+        .when(!workspace.settings_open, move |this| {
+            this.child(
+                canvas(
+                    |_bounds, _window, _cx| {},
+                    move |bounds, _prepaint, window, cx| {
+                        window.handle_input(
+                            &focus_handle,
+                            ElementInputHandler::new(bounds, workspace_entity.clone()),
+                            cx,
+                        );
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            )
+        })
 }

@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,18 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use vt100::Parser;
 
 const SCROLLBACK_LINES: usize = 10000;
+
+const ZSH_CODEPOINT_BACKSPACE: &str = r#"
+vterm_backward_delete_codepoint() {
+    if (( CURSOR > 0 )); then
+        LBUFFER="${LBUFFER[1,$((CURSOR - 1))]}${LBUFFER[$((CURSOR + 1)),-1]}"
+    fi
+}
+zle -N vterm-backward-delete-codepoint vterm_backward_delete_codepoint
+bindkey '^?' vterm-backward-delete-codepoint
+bindkey -M emacs '^?' vterm-backward-delete-codepoint
+bindkey -M viins '^?' vterm-backward-delete-codepoint
+"#;
 
 /// Re-exported so downstream UI crates can interpret cell colors without
 /// depending on the emulator directly.
@@ -52,6 +65,9 @@ impl PtyTerminal {
         };
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string());
+        let zsh_integration = (shell.rsplit('/').next() == Some("zsh"))
+            .then(prepare_zsh_integration)
+            .flatten();
         let mut session_name = None;
         let mut cmd = CommandBuilder::new(&shell);
         cmd.args(["-l"]);
@@ -103,6 +119,10 @@ impl PtyTerminal {
         // advertise that: CLIs that skip color queries (codex, vim, …) use
         // COLORFGBG to pick their dark palette. Note opencode ignores it.
         cmd.env("COLORFGBG", "15;0");
+        if let Some((config_dir, original_zdotdir)) = zsh_integration {
+            cmd.env("ZDOTDIR", config_dir.to_string_lossy().as_ref());
+            cmd.env("_VTERM_ORIGINAL_ZDOTDIR", original_zdotdir);
+        }
 
         let child = match pair.slave.spawn_command(cmd) {
             Ok(child) => child,
@@ -266,6 +286,47 @@ impl Drop for PtyTerminal {
             let _ = child.kill();
         }
     }
+}
+
+fn prepare_zsh_integration() -> Option<(PathBuf, String)> {
+    let original_zdotdir = std::env::var("ZDOTDIR")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .or_else(|| std::env::var("HOME").ok())?;
+
+    let base = std::env::temp_dir();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let config_dir = base.join(format!("vterm-zsh-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&config_dir).ok()?;
+
+    let source = |file: &str| {
+        format!(
+            "if [[ -r \"$_VTERM_ORIGINAL_ZDOTDIR/{file}\" ]]; then\n    source \"$_VTERM_ORIGINAL_ZDOTDIR/{file}\"\nfi\n"
+        )
+    };
+    let files = [
+        (".zshenv", source(".zshenv")),
+        (".zprofile", source(".zprofile")),
+        (
+            ".zshrc",
+            format!("{}{}", source(".zshrc"), ZSH_CODEPOINT_BACKSPACE),
+        ),
+        (
+            ".zlogin",
+            format!("{}{}", source(".zlogin"), ZSH_CODEPOINT_BACKSPACE),
+        ),
+    ];
+
+    for (name, contents) in files {
+        if std::fs::write(config_dir.join(name), contents).is_err() {
+            let _ = std::fs::remove_dir_all(&config_dir);
+            return None;
+        }
+    }
+
+    Some((config_dir, original_zdotdir))
 }
 
 fn dead_terminal(parser: Arc<Mutex<Parser>>, session_name: Option<String>) -> PtyTerminal {
