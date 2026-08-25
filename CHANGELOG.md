@@ -4,6 +4,9 @@ All notable changes to vterm are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-25
+
+
 - Terminal panes now follow the app theme: background, foreground, and the ANSI 0–15 palette are injected from the selected theme and apply live — including to terminals that are already running.
 - Swap the terminal emulator core from `vt100` to `alacritty_terminal` (the same core Zed embeds), so apps like opencode and codex run against a battle-tested xterm implementation.
 - Answer OSC 10/11/4 color queries from the emulator itself at query time, replying with the exact colors the pane renders — opencode now detects the dark background on startup and picks its dark theme instead of a broken fallback.
