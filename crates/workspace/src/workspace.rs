@@ -1211,7 +1211,7 @@ impl EntityInputHandler for Workspace {
         Some(Bounds::new(
             element_bounds.origin
                 + point(
-                    px(16.0 + 0.5 + col as f32 * cell_w),
+                    px(16.0 + col as f32 * cell_w),
                     px(16.0 + 3.0 + row as f32 * cell_h),
                 ),
             size(px(cell_w), px(cell_h)),

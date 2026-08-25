@@ -3,10 +3,12 @@ use gpui::prelude::*;
 use gpui::*;
 use terminal::{palette_rgb, CellColor, TermCell};
 
-// Vertical/horizontal nudge applied to each grid line so glyphs sit centered
-// inside their cell. Overlays (selection, IME, cursor) must add the same
-// offset or they drift above the text. Keep in sync with `line .pt` / `.px`.
-const CELL_PAD_X: f32 = 0.5;
+// Vertical nudge applied to each grid line so glyphs sit centered inside their
+// cell. Overlays (selection, IME, cursor) must add the same offset or they
+// drift above the text. Keep in sync with the line `.pt`. Horizontal padding
+// was removed from text runs (it accumulated per run); glyphs start at the
+// column origin, so CELL_PAD_X is 0.
+const CELL_PAD_X: f32 = 0.0;
 const CELL_PAD_Y: f32 = 3.0;
 
 // Colors resolve through the `terminal` crate's shared TerminalColors handle
@@ -227,7 +229,7 @@ pub fn render_terminal_view(
 
                         let create_el = || {
                             let mut base =
-                                div().whitespace_nowrap().text_color(final_fg).px(px(0.5));
+                                div().whitespace_nowrap().text_color(final_fg);
                             if bg != CellColor::Background || inv {
                                 base = base.bg(final_bg);
                             }
