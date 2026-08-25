@@ -1065,6 +1065,29 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_passes_through_truecolor() {
+        // codex colors its input line with 24-bit SGR; the emulator must keep
+        // the exact RGB rather than collapsing to a palette entry.
+        let (term, events) = make_term(1, 20);
+        feed(&term, b"\x1b[38;2;205;49;49mX\x1b[48;2;10;20;30mY\x1b[0m");
+
+        let snap = PtyTerminal::for_testing(term, events).snapshot();
+        assert_eq!(
+            snap.cell(0, 0).map(|c| (c.ch, c.fg)),
+            Some(('X', CellColor::Rgb([205, 49, 49])))
+        );
+        assert_eq!(
+            snap.cell(0, 1).map(|c| (c.ch, c.bg)),
+            Some(('Y', CellColor::Rgb([10, 20, 30])))
+        );
+        // Reset restores defaults, not the last truecolor value.
+        assert_eq!(
+            snap.cell(0, 2).map(|c| (c.ch, c.fg, c.bg)),
+            Some((' ', CellColor::Foreground, CellColor::Background))
+        );
+    }
+
+    #[test]
     fn snapshot_views_scrollback_offset() {
         let (term, events) = make_term(2, 10);
         feed(&term, b"one\r\ntwo\r\nthree\r\nfour");
