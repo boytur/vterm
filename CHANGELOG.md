@@ -7,6 +7,9 @@ All notable changes to vterm are documented here.
 - Enable GitHub Actions to create and approve pull requests so the release changelog automation works again.
 - Add native Unicode and IME input handling for Thai, Arabic, Latin, and other composed text.
 - Preserve combining-character deletion in macOS terminal sessions.
+- Keep new workspaces named `Workspace N` regardless of how the app is launched.
+- Label development runs as `vterm-dev` with a unique commit/build version and disable auto-updates.
+- Isolate development build artifacts, state, and process shutdown from release vterm.
 
 ## [0.3.1] - 2026-08-24
 

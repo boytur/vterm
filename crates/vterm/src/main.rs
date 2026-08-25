@@ -35,9 +35,12 @@ fn main() {
 }
 
 fn open_window(cx: &mut App) {
+    let app_name = std::env::var("VTERM_APP_NAME").unwrap_or_else(|_| "vterm".to_string());
+    let app_version = std::env::var("VTERM_DEV_VERSION")
+        .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
     let options = WindowOptions {
         titlebar: Some(TitlebarOptions {
-            title: Some("vterm".into()),
+            title: Some(format!("{app_name} v{app_version}").into()),
             appears_transparent: true,
             traffic_light_position: Some(point(px(12.0), px(9.0))),
         }),
