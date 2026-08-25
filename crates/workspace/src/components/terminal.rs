@@ -3,6 +3,12 @@ use gpui::prelude::*;
 use gpui::*;
 use terminal::{palette_rgb, CellColor, TermCell};
 
+// Vertical/horizontal nudge applied to each grid line so glyphs sit centered
+// inside their cell. Overlays (selection, IME, cursor) must add the same
+// offset or they drift above the text. Keep in sync with `line .pt` / `.px`.
+const CELL_PAD_X: f32 = 0.5;
+const CELL_PAD_Y: f32 = 3.0;
+
 // Colors resolve through the `terminal` crate's shared TerminalColors handle
 // so OSC 10/11/4 color-query replies are guaranteed to match what this
 // renderer paints — including live theme switches.
@@ -135,8 +141,8 @@ pub fn render_terminal_view(
         {
             ime_composition_overlay = div()
                 .absolute()
-                .left(px(16.0 + cursor_col as f32 * cell_w))
-                .top(px(16.0 + cursor_row as f32 * cell_h))
+                .left(px(16.0 + CELL_PAD_X + cursor_col as f32 * cell_w))
+                .top(px(16.0 + CELL_PAD_Y + cursor_row as f32 * cell_h))
                 .min_w(px(cell_w))
                 .h(px(cell_h))
                 .px(px(1.0))
@@ -156,8 +162,8 @@ pub fn render_terminal_view(
             let max_r = r1.max(r2);
             let mut rects: Vec<gpui::AnyElement> = Vec::new();
             for r in min_r..=max_r {
-                let x = 16.0 + min_c as f32 * cell_w;
-                let y = 16.0 + r as f32 * cell_h;
+                let x = 16.0 + CELL_PAD_X + min_c as f32 * cell_w;
+                let y = 16.0 + CELL_PAD_Y + r as f32 * cell_h;
                 let w = (max_c - min_c + 1) as f32 * cell_w;
                 rects.push(
                     div()
@@ -328,8 +334,8 @@ pub fn render_terminal_view(
                     .flex()
                     .flex_row()
                     .items_start()
-                    .pt(px(3.0))
-                    .h(px(cell_h))
+                .pt(px(CELL_PAD_Y))
+                .h(px(cell_h))
                     .children(line_children),
             );
         }
