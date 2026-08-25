@@ -51,21 +51,6 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
                 div()
                     .w(px(14.0))
                     .h(px(14.0))
-                    .child(
-                        gpui::svg()
-                            .path("icons/vterm_logo.svg")
-                            .text_color(if workspace.branch_menu_open {
-                                theme.text_primary
-                            } else {
-                                theme.accent
-                            })
-                            .size(px(14.0)),
-                    ),
-            )
-            .child(
-                div()
-                    .w(px(14.0))
-                    .h(px(14.0))
                     // A simple git branch SVG icon string
                     .child(
                         gpui::svg()
