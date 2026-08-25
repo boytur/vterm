@@ -1,4 +1,5 @@
 use crate::workspace::Workspace;
+use gpui::prelude::*;
 use gpui::*;
 
 // Fixed xterm-standard palette. Deliberately NOT derived from the app theme:
