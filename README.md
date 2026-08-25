@@ -77,12 +77,14 @@ entry unreleased until a version tag is created; do not add a version number or
 date manually during normal development.
 
 The Changelog Check workflow verifies that the PR changes the `Unreleased`
-section. When a `v*` tag is pushed, the release workflow uses those entries as
-GitHub Release notes and opens a PR that moves them under the tagged version.
-For that final PR to be created automatically, enable **Allow GitHub Actions to
-create and approve pull requests** in Settings → Actions → General → Workflow
-permissions. The release itself can still publish if this repository setting is
-off, but the changelog PR step will fail after pushing its branch.
+section and that every existing `v*` tag has a dated release section with at
+least one bullet. When a `v*` tag is pushed, the release workflow uses those
+entries as GitHub Release notes, opens a changelog PR, and enables auto-merge so
+the versioned changelog lands on `master` after required checks pass.
+For this to work automatically, enable **Allow GitHub Actions to create and
+approve pull requests** in Settings → Actions → General → Workflow permissions
+and configure `RELEASE_TOKEN` with contents and pull-request write access. The
+workflow falls back to `GITHUB_TOKEN` when that secret is unavailable.
 
 ## CI / CD
 
@@ -100,7 +102,8 @@ git push origin v0.2.5
 ```
 
 The tag starts the macOS build and release. A follow-up changelog PR is opened
-automatically so the versioned history is reviewed before it lands on `master`.
+and auto-merged after its required checks pass, so the versioned history lands
+on `master` without a manual merge.
 
 ### Cloudflare Pages setup
 Add these repository secrets (Settings → Secrets → Actions):

@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   prepare:
-    if: github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')
+    if: github.event.workflow_run.conclusion == 'success'
     name: Version the changelog
     runs-on: ubuntu-latest
     steps:
@@ -21,43 +21,88 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Move Unreleased entries under the tag
+      - name: Resolve release tag
+        id: release
         env:
-          TAG_NAME: ${{ github.event.workflow_run.head_branch }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          tag="$(git tag --points-at "$RELEASE_SHA" --list 'v[0-9]*' --sort=version:refname | tail -n 1)"
+          if [ -z "$tag" ]; then
+            echo 'The completed workflow was not associated with a release tag; skipping.'
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Move Unreleased entries under the tag
+        if: steps.release.outputs.tag != ''
+        env:
+          TAG_NAME: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
           VERSION="${TAG_NAME#v}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           RELEASE_DATE="$(date -u +%Y-%m-%d)"
 
+          if grep -Eq "^## \\[${VERSION//./\\.}\\] - " CHANGELOG.md; then
+            echo "CHANGELOG.md already contains ${TAG_NAME}." >&2
+            exit 1
+          fi
+
           awk -v version="$VERSION" -v release_date="$RELEASE_DATE" '
-            BEGIN { section = 0; found = 0 }
-            /^## \[Unreleased\][[:space:]]*$/ {
-              print
+            function flush_release() {
               print ""
               print "## [" version "] - " release_date
               print ""
+              for (i = 1; i <= body_lines; i++) print body[i]
+            }
+            BEGIN { section = 0; found = 0; saw_unreleased = 0; body_lines = 0 }
+            /^## \[Unreleased\][[:space:]]*$/ {
+              print
               section = 1
+              saw_unreleased = 1
               next
             }
-            section && /^## / { section = 0 }
-            section && /^[[:space:]]*-[[:space:]]+/ { found = 1 }
+            section && /^## / {
+              flush_release()
+              section = 0
+              print
+              next
+            }
+            section {
+              body[++body_lines] = $0
+              if ($0 ~ /^[[:space:]]*-[[:space:]]+/) found = 1
+              next
+            }
             { print }
-            END { if (!found) exit 1 }
+            END {
+              if (!saw_unreleased || !found) exit 1
+              if (section) flush_release()
+            }
           ' CHANGELOG.md > CHANGELOG.md.tmp
           mv CHANGELOG.md.tmp CHANGELOG.md
 
       - name: Open changelog pull request
+        id: changelog-pr
+        if: steps.release.outputs.tag != ''
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           base: master
-          branch: chore/release-${{ github.event.workflow_run.head_branch }}
+          branch: chore/release-${{ steps.release.outputs.tag }}
           delete-branch: true
-          commit-message: "docs: prepare changelog for ${{ github.event.workflow_run.head_branch }}"
-          title: "docs: prepare changelog for ${{ github.event.workflow_run.head_branch }}"
+          commit-message: "docs: prepare changelog for ${{ steps.release.outputs.tag }}"
+          title: "docs: prepare changelog for ${{ steps.release.outputs.tag }}"
           body: |
-            This pull request was generated after the `${{ github.event.workflow_run.head_branch }}` release completed.
+            This pull request was generated after the `${{ steps.release.outputs.tag }}` release completed.
 
             It moves the reviewed `Unreleased` entries under the tagged version.
-            Merge it after checking the release notes.
+            It is configured to merge automatically after the required checks pass.
+
+      - name: Enable changelog pull request auto-merge
+        if: steps.changelog-pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.changelog-pr.outputs.pull-request-number }}
+        run: gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --auto --delete-branch

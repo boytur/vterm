@@ -11,11 +11,14 @@ All notable changes to vterm are documented here.
 - Prevent inherited terminal shell-integration hooks from leaking into new or resumed sessions.
 - Render box-drawing and table borders as connected GPUI line segments.
 - Keep CLI and UI colors readable when the active theme changes.
+- Automatically merge generated release changelog pull requests into `master` after required checks pass.
 
 ## [0.4.2] - 2026-08-25
 
-
 - Fix terminal text selection: the selection highlight, IME underline, and cursor anchor now line up exactly with the glyphs under the cursor. The bug came from stale layout constants (sidebar/title-bar/tab-bar sizes) in the mouse→cell mapping plus a per-run text padding that drifted glyphs off the cell grid; clicking now selects the character you actually click.
+
+## [0.4.1] - 2026-08-25
+
 - Highlight the destination tab with the accent color (background tint + border) while dragging a tab to reorder, so the drop target is clearly visible instead of the previous near-invisible 2px bar.
 - Apply the same drag-reorder drop-target highlight to the workspace sidebar: the destination workspace (and the + Add Workspace button) now show an accent background tint + border while dragging.
 - Drop the always-on border on sidebar workspace items (and inactive tabs) in the normal state — borders now appear only for the active item or the drag drop target.
@@ -28,12 +31,14 @@ All notable changes to vterm are documented here.
 - Title bar: only empty header space now starts a window move — the branch/theme/Settings buttons no longer trigger a window move (the move handler was moved to a drag layer behind the buttons).
 - Opening the Local Branches dropdown now focuses the window so you can type to search immediately (previously the terminal kept focus and the first keystrokes were lost until you clicked the search box).
 - The search input now has a fixed height (34px) so it no longer grows by a few pixels when you start typing (was sizing to the caret vs. the text line).
+
+## [0.4.0] - 2026-08-25
+
 - Terminal panes now follow the app theme: background, foreground, and the ANSI 0–15 palette are injected from the selected theme and apply live — including to terminals that are already running.
 - Swap the terminal emulator core from `vt100` to `alacritty_terminal` (the same core Zed embeds), so apps like opencode and codex run against a battle-tested xterm implementation.
 - Answer OSC 10/11/4 color queries from the emulator itself at query time, replying with the exact colors the pane renders — opencode now detects the dark background on startup and picks its dark theme instead of a broken fallback.
 - Spawn new terminals directly on the PTY instead of wrapping them in GNU screen, whose byte-stream interpretation swallowed color probes; reattaching to persisted sessions still uses screen.
 - Fix the grayscale ANSI palette (indices 232–255) stepping by 11 instead of the standard 10, which miscolored near-white grays and overflowed at index 255.
-
 - Enable GitHub Actions to create and approve pull requests so the release changelog automation works again.
 - Add native Unicode and IME input handling for Thai, Arabic, Latin, and other composed text.
 - Preserve combining-character deletion in macOS terminal sessions.
@@ -71,7 +76,7 @@ All notable changes to vterm are documented here.
 - Stop recoloring CLI output with the app theme: ANSI 0–15 use a fixed xterm-standard palette, and bold text no longer forces a white foreground.
 - Re-apply `TERM=xterm-256color` / `COLORTERM=truecolor` after the macOS screen wrapper replaces the spawn command, restoring truecolor for CLIs.
 
-## [0.2.4] - 2026-08-23
+## [0.2.4] - 2026-08-24
 
 - Add 27 built-in themes, including light, high-contrast, and VS Code-inspired palettes.
 - Add a settings dialog with Appearance, Terminal, and About sections.
