@@ -1610,7 +1610,11 @@ impl Render for Workspace {
             let backdrop = div()
                 .id("branch-backdrop")
                 .absolute()
-                .inset_0()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(gpui::rgba(0x00000022))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _e, _w, cx| {
