@@ -1615,6 +1615,8 @@ impl Render for Workspace {
                 .right_0()
                 .bottom_0()
                 .bg(gpui::rgba(0x00000022))
+                .cursor_default()
+                .on_mouse_move(cx.listener(|_, _, _, _| {}))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|this, _e, _w, cx| {
