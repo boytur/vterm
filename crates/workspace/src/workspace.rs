@@ -105,8 +105,8 @@ impl Workspace {
                 let cwd = term_data.cwd.clone();
                 let session_name = term_data.session_name.clone();
                 let colors = terminal_colors.clone();
-                let term =
-                    cx.new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx));
+                let term = cx
+                    .new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx));
                 let actual_session = term.read(cx).session_name.clone();
                 if term_data.session_name != actual_session {
                     term_data.session_name = actual_session;
@@ -513,7 +513,8 @@ impl Workspace {
         let cwd = self.get_active_terminal_cwd(cx);
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
         let colors = self.terminal_colors.clone();
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
+        let term =
+            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
@@ -1030,7 +1031,8 @@ impl Workspace {
 
         let (rows, cols) = Self::terminal_size(window.viewport_size(), self.state.font_size);
         let colors = self.terminal_colors.clone();
-        let term = cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
+        let term =
+            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
         let session_name = term.read(cx).session_name.clone();
 
@@ -1550,7 +1552,7 @@ impl Render for Workspace {
                 .absolute()
                 .top(px(28.0))
                 .left(px(80.0)) // Roughly aligned with branch text
-                .w(px(200.0))
+                .w(px(500.0))
                 .max_h(px(300.0))
                 .overflow_y_scroll()
                 .bg(theme.bg_sidebar)
@@ -1605,7 +1607,20 @@ impl Render for Workspace {
                         .child(branch.clone()),
                 );
             }
-            root = root.child(list);
+            let backdrop = div()
+                .id("branch-backdrop")
+                .absolute()
+                .inset_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _e, _w, cx| {
+                        this.branch_menu_open = false;
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+
+            root = root.child(backdrop).child(list);
         }
 
         if let Some(msg) = &self.toast {
