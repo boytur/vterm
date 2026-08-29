@@ -65,6 +65,14 @@ fn process_cwd(#[allow(unused_variables)] pid: u32) -> Option<String> {
     }
 }
 
+fn git_command(cwd: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(cwd);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
+
 pub struct Workspace {
     pub state: AppState,
     pub focus_handle: gpui::FocusHandle,
@@ -257,13 +265,8 @@ impl Workspace {
                         .spawn(async move {
                             let cwd = active_pid.and_then(process_cwd).or(fallback_cwd);
                             let branch = if let Some(ref c) = cwd {
-                                let mut cmd = std::process::Command::new("git");
-                                cmd.args(["branch", "--show-current"]).current_dir(c);
-                                #[cfg(windows)]
-                                std::os::windows::process::CommandExt::creation_flags(
-                                    &mut cmd,
-                                    0x08000000,
-                                ); // CREATE_NO_WINDOW
+                                let mut cmd = git_command(c);
+                                cmd.args(["branch", "--show-current"]);
                                 if let Ok(output) = cmd.output() {
                                     let stdout = String::from_utf8_lossy(&output.stdout);
                                     stdout.trim().to_string()
@@ -529,14 +532,12 @@ impl Workspace {
         self.branch_search = TextField::new("").with_left_pad(24.0);
         if self.branch_menu_open {
             window.focus(&self.focus_handle);
-            if let Some(cwd) = self.get_active_terminal_cwd(cx)
-                && let Ok(output) = std::process::Command::new("git")
-                    .args(["branch", "--format=%(refname:short)"])
-                    .current_dir(cwd)
-                    .output()
-            {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+            if let Some(cwd) = self.get_active_terminal_cwd(cx) {
+                let mut cmd = git_command(&cwd);
+                if let Ok(output) = cmd.args(["branch", "--format=%(refname:short)"]).output() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+                }
             }
         }
         cx.notify();
@@ -544,21 +545,14 @@ impl Workspace {
 
     pub fn checkout_branch(&mut self, branch: &str, cx: &mut Context<Self>) {
         if let Some(cwd) = self.get_active_terminal_cwd(cx) {
-            if let Ok(output) = std::process::Command::new("git")
-                .args(["checkout", branch])
-                .current_dir(&cwd)
-                .output()
+            if let Ok(output) = git_command(&cwd).args(["checkout", branch]).output()
                 && !output.status.success()
             {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 self.alert_modal = Some(("Git Checkout Failed".to_string(), stderr.to_string()));
             }
 
-            if let Ok(output) = std::process::Command::new("git")
-                .args(["branch", "--show-current"])
-                .current_dir(&cwd)
-                .output()
-            {
+            if let Ok(output) = git_command(&cwd).args(["branch", "--show-current"]).output() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 self.git_branch = stdout.trim().to_string();
             }

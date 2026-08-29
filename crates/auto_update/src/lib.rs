@@ -69,10 +69,8 @@ pub fn check_for_update_detailed() -> Result<Option<UpdateInfo>, String> {
         .find(|a| {
             if cfg!(target_os = "macos") {
                 a.name.ends_with(".dmg")
-            } else if cfg!(target_os = "windows") {
-                a.name.ends_with(".msi") || a.name.ends_with(".exe")
             } else {
-                a.name.ends_with(".AppImage") || a.name.ends_with(".tar.gz")
+                false
             }
         })
         .map(|a| a.browser_download_url.clone());
