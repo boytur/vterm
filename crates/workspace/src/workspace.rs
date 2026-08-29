@@ -28,7 +28,7 @@ const TITLE_BAR_HEIGHT: f32 = 32.0;
 const TAB_BAR_HEIGHT: f32 = 32.0;
 const PANE_PAD: f32 = 16.0;
 
-fn process_cwd(pid: u32) -> Option<String> {
+fn process_cwd(#[allow(unused_variables)] pid: u32) -> Option<String> {
     #[cfg(unix)]
     {
         let child_pids = std::process::Command::new("pgrep")
@@ -61,29 +61,7 @@ fn process_cwd(pid: u32) -> Option<String> {
 
     #[cfg(windows)]
     {
-        // On Windows, query the process CWD via wmic/PowerShell.
-        // ponytail: upgrade to NtQueryInformationProcess for child-walk parity.
-        let output = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!(
-                    "(Get-Process -Id {} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path | Split-Path -Parent) 2>$null",
-                    pid
-                ),
-            ])
-            .output()
-            .ok()?;
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        // PowerShell path query is unreliable for CWD; fall back to $HOME.
-        if path.is_empty() {
-            std::env::var("USERPROFILE").ok()
-        } else {
-            // The above gets the exe dir, not CWD. For now return home dir;
-            // proper CWD tracking needs NtQueryInformationProcess or shell
-            // integration (OSC 7).
-            std::env::var("USERPROFILE").ok()
-        }
+        None // Dynamic CWD tracking requires NtQueryInformationProcess
     }
 }
 
@@ -138,7 +116,7 @@ impl Workspace {
         let term_idx = ws.active_term;
         let term_entity = self.terminals.get(ws_idx)?.get(term_idx)?;
         let pid = term_entity.read(cx).child_pid?;
-        process_cwd(pid)
+        process_cwd(pid).or_else(|| ws.terminals.get(term_idx).and_then(|t| t.cwd.clone()))
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -256,6 +234,7 @@ impl Workspace {
 
     fn poll_git_branch(&mut self, cx: &mut Context<Self>) {
         let mut active_pid = None;
+        let mut fallback_cwd = None;
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get(ws_idx) {
             let term_idx = ws.active_term;
@@ -265,6 +244,7 @@ impl Workspace {
                 .and_then(|terms| terms.get(term_idx))
             {
                 active_pid = term_entity.read(cx).child_pid;
+                fallback_cwd = ws.terminals.get(term_idx).and_then(|t| t.cwd.clone());
             }
         }
 
@@ -275,15 +255,21 @@ impl Workspace {
                 async move {
                     let (branch, _cwd) = executor
                         .spawn(async move {
-                            let cwd = active_pid.and_then(process_cwd);
-                            let branch = if let Some(ref c) = cwd
-                                && let Ok(output) = std::process::Command::new("git")
-                                    .args(["branch", "--show-current"])
-                                    .current_dir(c)
-                                    .output()
-                            {
-                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                stdout.trim().to_string()
+                            let cwd = active_pid.and_then(process_cwd).or(fallback_cwd);
+                            let branch = if let Some(ref c) = cwd {
+                                let mut cmd = std::process::Command::new("git");
+                                cmd.args(["branch", "--show-current"]).current_dir(c);
+                                #[cfg(windows)]
+                                std::os::windows::process::CommandExt::creation_flags(
+                                    &mut cmd,
+                                    0x08000000,
+                                ); // CREATE_NO_WINDOW
+                                if let Ok(output) = cmd.output() {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    stdout.trim().to_string()
+                                } else {
+                                    String::new()
+                                }
                             } else {
                                 String::new()
                             };
