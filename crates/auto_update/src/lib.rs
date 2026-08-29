@@ -66,7 +66,15 @@ pub fn check_for_update_detailed() -> Result<Option<UpdateInfo>, String> {
     let download = release
         .assets
         .iter()
-        .find(|a| a.name.ends_with(".dmg"))
+        .find(|a| {
+            if cfg!(target_os = "macos") {
+                a.name.ends_with(".dmg")
+            } else if cfg!(target_os = "windows") {
+                a.name.ends_with(".msi") || a.name.ends_with(".exe")
+            } else {
+                a.name.ends_with(".AppImage") || a.name.ends_with(".tar.gz")
+            }
+        })
         .map(|a| a.browser_download_url.clone());
     let download_url = download
         .clone()

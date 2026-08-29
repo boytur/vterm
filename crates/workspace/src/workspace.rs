@@ -11,6 +11,14 @@ use std::ops::Range;
 use terminal::PtyTerminal;
 use ui::{button::button, modal::modal_overlay, text_input::TextField};
 
+/// Platform-appropriate monospace font for the terminal grid.
+#[cfg(target_os = "macos")]
+pub const TERMINAL_FONT: &str = "Menlo";
+#[cfg(target_os = "windows")]
+pub const TERMINAL_FONT: &str = "Consolas";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const TERMINAL_FONT: &str = "Monospace";
+
 // Layout constants that must match the real UI chrome. The terminal pane sits
 // right of the sidebar (w_64 = 256px in gpui rem units) and below the title bar
 // (h(px(32.0))) + tab bar (h(px(32.0))), with px_4() (16px) padding on every
@@ -21,32 +29,62 @@ const TAB_BAR_HEIGHT: f32 = 32.0;
 const PANE_PAD: f32 = 16.0;
 
 fn process_cwd(pid: u32) -> Option<String> {
-    let child_pids = std::process::Command::new("pgrep")
-        .args(["-P", &pid.to_string()])
-        .output()
-        .ok()
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter_map(|line| line.trim().parse::<u32>().ok())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    #[cfg(unix)]
+    {
+        let child_pids = std::process::Command::new("pgrep")
+            .args(["-P", &pid.to_string()])
+            .output()
+            .ok()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter_map(|line| line.trim().parse::<u32>().ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
-    for child_pid in child_pids {
-        if let Some(cwd) = process_cwd(child_pid) {
-            return Some(cwd);
+        for child_pid in child_pids {
+            if let Some(cwd) = process_cwd(child_pid) {
+                return Some(cwd);
+            }
         }
+
+        let output = std::process::Command::new("lsof")
+            .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
+            .output()
+            .ok()?;
+
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| line.strip_prefix('n').map(str::to_string))
     }
 
-    let output = std::process::Command::new("lsof")
-        .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
-        .output()
-        .ok()?;
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix('n').map(str::to_string))
+    #[cfg(windows)]
+    {
+        // On Windows, query the process CWD via wmic/PowerShell.
+        // ponytail: upgrade to NtQueryInformationProcess for child-walk parity.
+        let output = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "(Get-Process -Id {} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path | Split-Path -Parent) 2>$null",
+                    pid
+                ),
+            ])
+            .output()
+            .ok()?;
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // PowerShell path query is unreliable for CWD; fall back to $HOME.
+        if path.is_empty() {
+            std::env::var("USERPROFILE").ok()
+        } else {
+            // The above gets the exe dir, not CWD. For now return home dir;
+            // proper CWD tracking needs NtQueryInformationProcess or shell
+            // integration (OSC 7).
+            std::env::var("USERPROFILE").ok()
+        }
+    }
 }
 
 pub struct Workspace {
@@ -182,7 +220,7 @@ impl Workspace {
         text_system: &gpui::TextSystem,
         font_size: f32,
     ) -> f32 {
-        let font_id = text_system.resolve_font(&font("Menlo"));
+        let font_id = text_system.resolve_font(&font(TERMINAL_FONT));
         text_system
             .ch_advance(font_id, px(font_size))
             .map(f32::from)

@@ -81,7 +81,9 @@ pub fn render_title_bar(workspace: &Workspace, _cx: &mut Context<Workspace>) -> 
         .flex_row()
         .items_center()
         .justify_between()
-        .pl(px(80.0)) // Clear the macOS traffic lights
+        // On macOS, pad left to clear traffic light buttons; on Windows the
+        // native title bar controls sit on the right side.
+        .pl(px(if cfg!(target_os = "macos") { 80.0 } else { 16.0 }))
         .pr(px(16.0))
         .border_b_1()
         .border_color(theme.border)
