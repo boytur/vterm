@@ -3,6 +3,9 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-08-30
+
 - Add initial Windows platform support.
 - Fix native window decorations (minimize/maximize/close) on Windows.
 - Make terminal shell and paths adapt natively to Windows environments.
