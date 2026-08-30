@@ -1,4 +1,4 @@
-use crate::workspace::Workspace;
+use crate::workspace::{Workspace, TERMINAL_FONT};
 use gpui::prelude::*;
 use gpui::*;
 use terminal::{palette_rgb, CellColor, TermCell};
@@ -752,7 +752,7 @@ pub fn render_terminal_view(
         .px_4()
         .pt_4()
         .pb_4()
-        .font_family("Menlo")
+        .font_family(TERMINAL_FONT)
         .text_size(px(font_size))
         .line_height(relative(20.0 / 14.0))
         .overflow_hidden()

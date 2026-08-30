@@ -3,6 +3,10 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
+- Add initial Windows platform support.
+- Fix native window decorations (minimize/maximize/close) on Windows.
+- Make terminal shell and paths adapt natively to Windows environments.
+- Enable GitHub Actions CI matrix builds for both macOS and Windows.
 
 ## [0.4.3] - 2026-08-25
 

@@ -282,7 +282,7 @@ pub struct PtyTerminal {
 impl PtyTerminal {
     pub fn new_with_cwd(
         cwd: Option<String>,
-        requested_session: Option<String>,
+        _requested_session: Option<String>,
         rows: u16,
         cols: u16,
         colors: TerminalColors,
@@ -305,12 +305,19 @@ impl PtyTerminal {
             }
         };
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string());
-        let zsh_integration = (shell.rsplit('/').next() == Some("zsh"))
-            .then(prepare_zsh_integration)
-            .flatten();
+        let shell = detect_shell();
+        let zsh_integration = if cfg!(unix) {
+            (shell.rsplit('/').next() == Some("zsh"))
+                .then(prepare_zsh_integration)
+                .flatten()
+        } else {
+            None
+        };
+        #[allow(unused_mut)]
         let mut session_name = None;
         let mut cmd = CommandBuilder::new(&shell);
+        // Login-shell flag is Unix-only; cmd.exe/powershell don't accept -l.
+        #[cfg(unix)]
         cmd.args(["-l"]);
         if let Some(cwd) = cwd.as_deref() {
             cmd.cwd(cwd);
@@ -322,7 +329,7 @@ impl PtyTerminal {
         // like opencode need answered to pick their dark/light theme — Zed
         // has no multiplexer between shell and emulator, and neither do we.
         #[cfg(target_os = "macos")]
-        if let Some((name, screen_target)) = requested_session
+        if let Some((name, screen_target)) = _requested_session
             .filter(|name| valid_session_name(name))
             .and_then(|name| screen_socket(&name).map(|socket| (name, socket)))
         {
@@ -679,6 +686,19 @@ impl Drop for PtyTerminal {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
         }
+    }
+}
+
+/// Returns the user's preferred shell, respecting the platform convention.
+fn detect_shell() -> String {
+    #[cfg(unix)]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_string())
+    }
+    #[cfg(windows)]
+    {
+        // Prefer PowerShell if available, fall back to cmd.exe.
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
     }
 }
 

@@ -11,6 +11,14 @@ use std::ops::Range;
 use terminal::PtyTerminal;
 use ui::{button::button, modal::modal_overlay, text_input::TextField};
 
+/// Platform-appropriate monospace font for the terminal grid.
+#[cfg(target_os = "macos")]
+pub const TERMINAL_FONT: &str = "Menlo";
+#[cfg(target_os = "windows")]
+pub const TERMINAL_FONT: &str = "Consolas";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const TERMINAL_FONT: &str = "Monospace";
+
 // Layout constants that must match the real UI chrome. The terminal pane sits
 // right of the sidebar (w_64 = 256px in gpui rem units) and below the title bar
 // (h(px(32.0))) + tab bar (h(px(32.0))), with px_4() (16px) padding on every
@@ -20,33 +28,49 @@ const TITLE_BAR_HEIGHT: f32 = 32.0;
 const TAB_BAR_HEIGHT: f32 = 32.0;
 const PANE_PAD: f32 = 16.0;
 
-fn process_cwd(pid: u32) -> Option<String> {
-    let child_pids = std::process::Command::new("pgrep")
-        .args(["-P", &pid.to_string()])
-        .output()
-        .ok()
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter_map(|line| line.trim().parse::<u32>().ok())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+fn process_cwd(#[allow(unused_variables)] pid: u32) -> Option<String> {
+    #[cfg(unix)]
+    {
+        let child_pids = std::process::Command::new("pgrep")
+            .args(["-P", &pid.to_string()])
+            .output()
+            .ok()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .filter_map(|line| line.trim().parse::<u32>().ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
-    for child_pid in child_pids {
-        if let Some(cwd) = process_cwd(child_pid) {
-            return Some(cwd);
+        for child_pid in child_pids {
+            if let Some(cwd) = process_cwd(child_pid) {
+                return Some(cwd);
+            }
         }
+
+        let output = std::process::Command::new("lsof")
+            .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
+            .output()
+            .ok()?;
+
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| line.strip_prefix('n').map(str::to_string))
     }
 
-    let output = std::process::Command::new("lsof")
-        .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
-        .output()
-        .ok()?;
+    #[cfg(windows)]
+    {
+        None // Dynamic CWD tracking requires NtQueryInformationProcess
+    }
+}
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix('n').map(str::to_string))
+fn git_command(cwd: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(cwd);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x08000000); // CREATE_NO_WINDOW
+    cmd
 }
 
 pub struct Workspace {
@@ -100,7 +124,7 @@ impl Workspace {
         let term_idx = ws.active_term;
         let term_entity = self.terminals.get(ws_idx)?.get(term_idx)?;
         let pid = term_entity.read(cx).child_pid?;
-        process_cwd(pid)
+        process_cwd(pid).or_else(|| ws.terminals.get(term_idx).and_then(|t| t.cwd.clone()))
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -182,7 +206,7 @@ impl Workspace {
         text_system: &gpui::TextSystem,
         font_size: f32,
     ) -> f32 {
-        let font_id = text_system.resolve_font(&font("Menlo"));
+        let font_id = text_system.resolve_font(&font(TERMINAL_FONT));
         text_system
             .ch_advance(font_id, px(font_size))
             .map(f32::from)
@@ -218,6 +242,7 @@ impl Workspace {
 
     fn poll_git_branch(&mut self, cx: &mut Context<Self>) {
         let mut active_pid = None;
+        let mut fallback_cwd = None;
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get(ws_idx) {
             let term_idx = ws.active_term;
@@ -227,6 +252,7 @@ impl Workspace {
                 .and_then(|terms| terms.get(term_idx))
             {
                 active_pid = term_entity.read(cx).child_pid;
+                fallback_cwd = ws.terminals.get(term_idx).and_then(|t| t.cwd.clone());
             }
         }
 
@@ -237,15 +263,16 @@ impl Workspace {
                 async move {
                     let (branch, _cwd) = executor
                         .spawn(async move {
-                            let cwd = active_pid.and_then(process_cwd);
-                            let branch = if let Some(ref c) = cwd
-                                && let Ok(output) = std::process::Command::new("git")
-                                    .args(["branch", "--show-current"])
-                                    .current_dir(c)
-                                    .output()
-                            {
-                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                stdout.trim().to_string()
+                            let cwd = active_pid.and_then(process_cwd).or(fallback_cwd);
+                            let branch = if let Some(ref c) = cwd {
+                                let mut cmd = git_command(c);
+                                cmd.args(["branch", "--show-current"]);
+                                if let Ok(output) = cmd.output() {
+                                    let stdout = String::from_utf8_lossy(&output.stdout);
+                                    stdout.trim().to_string()
+                                } else {
+                                    String::new()
+                                }
                             } else {
                                 String::new()
                             };
@@ -505,14 +532,12 @@ impl Workspace {
         self.branch_search = TextField::new("").with_left_pad(24.0);
         if self.branch_menu_open {
             window.focus(&self.focus_handle);
-            if let Some(cwd) = self.get_active_terminal_cwd(cx)
-                && let Ok(output) = std::process::Command::new("git")
-                    .args(["branch", "--format=%(refname:short)"])
-                    .current_dir(cwd)
-                    .output()
-            {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+            if let Some(cwd) = self.get_active_terminal_cwd(cx) {
+                let mut cmd = git_command(&cwd);
+                if let Ok(output) = cmd.args(["branch", "--format=%(refname:short)"]).output() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    self.git_branches = stdout.lines().map(|s| s.to_string()).collect();
+                }
             }
         }
         cx.notify();
@@ -520,21 +545,14 @@ impl Workspace {
 
     pub fn checkout_branch(&mut self, branch: &str, cx: &mut Context<Self>) {
         if let Some(cwd) = self.get_active_terminal_cwd(cx) {
-            if let Ok(output) = std::process::Command::new("git")
-                .args(["checkout", branch])
-                .current_dir(&cwd)
-                .output()
+            if let Ok(output) = git_command(&cwd).args(["checkout", branch]).output()
                 && !output.status.success()
             {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 self.alert_modal = Some(("Git Checkout Failed".to_string(), stderr.to_string()));
             }
 
-            if let Ok(output) = std::process::Command::new("git")
-                .args(["branch", "--show-current"])
-                .current_dir(&cwd)
-                .output()
-            {
+            if let Ok(output) = git_command(&cwd).args(["branch", "--show-current"]).output() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 self.git_branch = stdout.trim().to_string();
             }
