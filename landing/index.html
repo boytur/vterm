@@ -96,8 +96,9 @@
             "name": "How do I install vterm?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "On macOS, run curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash, or download the latest DMG from GitHub Releases."
+              "text": "On macOS and Windows, run curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash, or download the latest release asset from GitHub Releases."
             }
+
           },
           {
             "@type": "Question",
@@ -274,7 +275,7 @@
         <div class="section-intro">
           <p class="eyebrow">Start here</p>
           <h2 id="install-title">Install in one line.</h2>
-          <p>Run the command on macOS. It downloads the latest DMG, installs vterm to Applications, and clears the browser quarantine flag.</p>
+          <p>Run the command on macOS or Windows. It installs vterm directly and configures everything for your system.</p>
         </div>
         <div class="install-panel">
           <div class="snippet-label"><span>Terminal</span><span>copy and run</span></div>
@@ -282,14 +283,15 @@
             <code id="install-command">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code>
             <button class="copy-button" type="button" data-copy-target="install-command" aria-label="Copy install command">Copy</button>
           </div>
-          <p class="install-note">Requires macOS. The project is free and open source, but the app is not notarized with a paid Apple Developer ID.</p>
+          <p class="install-note">Supported on macOS and Windows. Free and open source.</p>
           <details class="manual-install">
-            <summary>Prefer a manual DMG?</summary>
+            <summary>Prefer manual download?</summary>
             <div>
-              <a class="text-link" href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg">Download the latest DMG <span aria-hidden="true">↗</span></a>
-              <p>Move <code>vterm.app</code> to Applications. If macOS reports that the app is damaged, run <code>xattr -cr /Applications/vterm.app</code> once.</p>
+              <a class="text-link" href="https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg">Download macOS DMG <span aria-hidden="true">↗</span></a><br />
+              <a class="text-link" href="https://github.com/boytur/vterm/releases/latest/download/vterm-windows.zip">Download Windows ZIP <span aria-hidden="true">↗</span></a>
             </div>
           </details>
+
           <details class="manual-install">
             <summary>Build from source</summary>
             <div><code class="block-code">git clone https://github.com/boytur/vterm.git<br />cd vterm<br />cargo run --release</code></div>

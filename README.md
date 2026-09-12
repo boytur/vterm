@@ -12,29 +12,29 @@ A high-performance, GPU-accelerated terminal emulator written in Rust using the 
 - **Persisted State**: Your tabs, workspaces, theme selections, and terminal sessions are persisted across restarts.
 - **In-App Updates**: Detect, download, and relaunch updates without losing terminal sessions.
 
-## Install (macOS)
+## Install
 
-vterm isn't notarized (no paid Apple Developer ID), so a DMG downloaded via
-browser will show "vterm is damaged" on first open — that's Gatekeeper
-rejecting an unsigned app that came in quarantined, not a broken build.
+### macOS & Windows (via curl)
 
-Recommended — installs via curl, which doesn't quarantine the download:
+Installs the latest release directly without security quarantine issues:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash
 ```
 
-Manual alternative: download the [DMG](https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg),
-drag `vterm.app` to Applications, then run:
+- **macOS**: Installs `vterm.app` to `/Applications` and clears Gatekeeper quarantine.
+- **Windows**: Installs `vterm.exe` to `%LOCALAPPDATA%\Programs\vterm`, adds it to User PATH, and creates a Start Menu shortcut.
 
-```bash
-xattr -cr /Applications/vterm.app
-```
+### Manual Download
+
+- **macOS**: Download [`vterm-macos.dmg`](https://github.com/boytur/vterm/releases/latest/download/vterm-macos.dmg), drag `vterm.app` to Applications, and run `xattr -cr /Applications/vterm.app`.
+- **Windows**: Download [`vterm-windows.zip`](https://github.com/boytur/vterm/releases/latest/download/vterm-windows.zip) and extract `vterm.exe`.
 
 ## Prerequisites
 
 - Rust (latest stable)
-- macOS (Linux and Windows support depends on GPUI support)
+- macOS or Windows
+
 
 ## Building & Running
 

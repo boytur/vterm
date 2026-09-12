@@ -3,8 +3,11 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
+- Add Windows support to the curl install script (install.sh).
+- Build and package Windows release zip in the CD workflow.
 
 ## [0.5.0] - 2026-08-30
+
 
 - Add initial Windows platform support.
 - Fix native window decorations (minimize/maximize/close) on Windows.
