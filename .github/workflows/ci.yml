@@ -12,14 +12,27 @@ env:
 jobs:
   build-and-test:
     name: Build & Test (${{ matrix.os }})
+    # The self-hosted Windows runner must never execute untrusted code:
+    # PRs from forks skip that leg (hosted macOS coverage still applies).
+    if: >-
+      matrix.os != 'self-hosted-windows' ||
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: macos-latest
+            runs-on: macos-latest
+          # Warm self-hosted box: incremental target dir, no queue/provision.
+          # Register with: ./config.cmd --url https://github.com/boytur/vterm
+          #   --token <fresh-token> --labels vterm-win
+          - os: self-hosted-windows
+            runs-on: [self-hosted, Windows, X64, vterm-win]
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -27,7 +40,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry

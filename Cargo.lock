@@ -462,7 +462,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "auto_update"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-channel 2.5.0",
  "semver",
@@ -5778,7 +5778,7 @@ dependencies = [
 
 [[package]]
 name = "terminal"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "alacritty_terminal",
  "async-channel 2.5.0",
@@ -5798,7 +5798,7 @@ dependencies = [
 
 [[package]]
 name = "theme"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "gpui",
 ]
@@ -6198,7 +6198,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "gpui",
  "theme",
@@ -6460,7 +6460,7 @@ dependencies = [
 
 [[package]]
 name = "vterm"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "embed-resource",
  "gpui",
@@ -7255,7 +7255,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "workspace"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-channel 2.5.0",
  "auto_update",

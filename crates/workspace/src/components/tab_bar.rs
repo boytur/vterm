@@ -61,7 +61,7 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                         theme.text_muted
                     };
 
-                    let drag_term = term.name.clone();
+                    let drag_term = term.display_name().to_string();
                     let drag_theme = theme.clone();
                     let show_indicator = drop_target == Some(i);
                     let accent = theme.accent;
@@ -147,7 +147,7 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                 .flex()
                                 .gap_2()
                                 .items_center()
-                                .child(term.name.clone())
+                                .child(term.display_name().to_string())
                                 .child(
                                     div()
                                         .id(("del-tab", i))

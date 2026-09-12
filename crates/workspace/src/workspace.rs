@@ -3,7 +3,7 @@ use crate::components::sidebar::render_sidebar;
 use crate::components::tab_bar::render_tab_bar;
 use crate::components::terminal::render_terminal_view;
 use crate::components::title_bar::render_title_bar;
-use crate::state::AppState;
+use crate::state::{AppState, SplitDir, SplitNode, TabData};
 use crate::{git_command, process_cwd, remove_staged_path};
 use gpui::prelude::*;
 use gpui::*;
@@ -29,10 +29,20 @@ const TITLE_BAR_HEIGHT: f32 = 32.0;
 const TAB_BAR_HEIGHT: f32 = 32.0;
 const PANE_PAD: f32 = 16.0;
 
+/// Runtime panes for one tab: one PTY entity per persisted pane plus the
+/// split tree and focus state (mirrors [`crate::state::TabData`]).
+pub struct TabPanes {
+    pub entities: Vec<Entity<PtyTerminal>>,
+    pub active_pane: usize,
+    pub root: SplitNode,
+    pub name: String,
+}
+
 pub struct Workspace {
     pub state: AppState,
     pub focus_handle: gpui::FocusHandle,
-    pub terminals: Vec<Vec<Entity<PtyTerminal>>>,
+    /// `terminals[ws][tab]` parallels `state.workspaces[ws].terminals[tab]`.
+    pub terminals: Vec<Vec<TabPanes>>,
     pub tab_context_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     pub tab_drop_target: Option<usize>,
     pub dir_drop_target: Option<usize>,
@@ -77,10 +87,12 @@ impl Workspace {
     pub fn get_active_terminal_cwd(&self, cx: &mut Context<Self>) -> Option<String> {
         let ws_idx = self.state.active_workspace;
         let ws = self.state.workspaces.get(ws_idx)?;
-        let term_idx = ws.active_term;
-        let term_entity = self.terminals.get(ws_idx)?.get(term_idx)?;
+        let tab = ws.terminals.get(ws.active_term)?;
+        let tab_panes = self.terminals.get(ws_idx)?.get(ws.active_term)?;
+        let pane_idx = tab_panes.active_pane;
+        let term_entity = tab_panes.entities.get(pane_idx)?;
         let pid = term_entity.read(cx).child_pid?;
-        process_cwd(pid).or_else(|| ws.terminals.get(term_idx).and_then(|t| t.cwd.clone()))
+        process_cwd(pid).or_else(|| tab.panes.get(pane_idx).and_then(|t| t.cwd.clone()))
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -89,22 +101,33 @@ impl Workspace {
             Self::terminal_size_for_window(window.viewport_size(), state.font_size, window);
         let mut state_changed = false;
         let terminal_colors = theme_terminal_colors(&state.theme);
-        let mut terminals = Vec::new();
+        let mut terminals: Vec<Vec<TabPanes>> = Vec::new();
         for ws in &mut state.workspaces {
             let mut ws_terms = Vec::new();
-            for term_data in &mut ws.terminals {
-                let cwd = term_data.cwd.clone();
-                let session_name = term_data.session_name.clone();
-                let colors = terminal_colors.clone();
-                let term = cx
-                    .new(|cx| PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx));
-                let actual_session = term.read(cx).session_name.clone();
-                if term_data.session_name != actual_session {
-                    term_data.session_name = actual_session;
-                    state_changed = true;
+            for tab_data in &mut ws.terminals {
+                tab_data.normalize();
+                let mut entities = Vec::new();
+                for pane_data in &mut tab_data.panes {
+                    let cwd = pane_data.cwd.clone();
+                    let session_name = pane_data.session_name.clone();
+                    let colors = terminal_colors.clone();
+                    let term = cx.new(|cx| {
+                        PtyTerminal::new_with_cwd(cwd, session_name, rows, cols, colors, cx)
+                    });
+                    let actual_session = term.read(cx).session_name.clone();
+                    if pane_data.session_name != actual_session {
+                        pane_data.session_name = actual_session;
+                        state_changed = true;
+                    }
+                    cx.observe(&term, |_, _, cx| cx.notify()).detach();
+                    entities.push(term);
                 }
-                cx.observe(&term, |_, _, cx| cx.notify()).detach();
-                ws_terms.push(term);
+                ws_terms.push(TabPanes {
+                    entities,
+                    active_pane: tab_data.active_pane,
+                    root: tab_data.root.clone(),
+                    name: tab_data.name.clone(),
+                });
             }
             terminals.push(ws_terms);
         }
@@ -183,14 +206,8 @@ impl Workspace {
         font_size: f32,
         cell_w: f32,
     ) -> (u16, u16) {
-        let cell_h = font_size * (20.0 / 14.0);
-        let cols = ((f32::from(viewport.width) - SIDEBAR_WIDTH - PANE_PAD * 2.0) / cell_w).max(10.0)
-            as u16;
-        let rows =
-            ((f32::from(viewport.height) - TITLE_BAR_HEIGHT - TAB_BAR_HEIGHT - PANE_PAD * 2.0)
-                / cell_h)
-                .max(10.0) as u16;
-        (rows, cols)
+        let (avail_w, avail_h) = Self::terminal_area_for_window(viewport);
+        Self::terminal_size_for_area(avail_w, avail_h, cell_w, font_size)
     }
 
     fn poll_git_branch(&mut self, cx: &mut Context<Self>) {
@@ -199,13 +216,21 @@ impl Workspace {
         let ws_idx = self.state.active_workspace;
         if let Some(ws) = self.state.workspaces.get(ws_idx) {
             let term_idx = ws.active_term;
-            if let Some(term_entity) = self
+            if let Some(tab) = self
                 .terminals
                 .get(ws_idx)
                 .and_then(|terms| terms.get(term_idx))
             {
-                active_pid = term_entity.read(cx).child_pid;
-                fallback_cwd = ws.terminals.get(term_idx).and_then(|t| t.cwd.clone());
+                let pane_idx = tab.active_pane;
+                active_pid = tab
+                    .entities
+                    .get(pane_idx)
+                    .and_then(|e| e.read(cx).child_pid);
+                fallback_cwd = ws
+                    .terminals
+                    .get(term_idx)
+                    .and_then(|t| t.panes.get(pane_idx))
+                    .and_then(|t| t.cwd.clone());
             }
         }
 
@@ -351,21 +376,28 @@ impl Workspace {
 
     fn snapshot_session(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
         for (ws_idx, ws) in self.state.workspaces.iter_mut().enumerate() {
-            for (term_idx, term_data) in ws.terminals.iter_mut().enumerate() {
-                let Some(term) = self
+            for (tab_idx, tab_data) in ws.terminals.iter_mut().enumerate() {
+                let Some(tab) = self
                     .terminals
                     .get(ws_idx)
-                    .and_then(|terms| terms.get(term_idx))
+                    .and_then(|terms| terms.get(tab_idx))
                 else {
                     continue;
                 };
-                let terminal = term.read(cx);
-                if let Some(pid) = terminal.child_pid {
-                    term_data.cwd = process_cwd(pid).or_else(|| term_data.cwd.clone());
+                for (pane_idx, pane_data) in tab_data.panes.iter_mut().enumerate() {
+                    let Some(entity) = tab.entities.get(pane_idx) else {
+                        continue;
+                    };
+                    let terminal = entity.read(cx);
+                    if let Some(pid) = terminal.child_pid {
+                        pane_data.cwd = process_cwd(pid).or_else(|| pane_data.cwd.clone());
+                    }
+                    if pane_data.session_name != terminal.session_name {
+                        pane_data.session_name = terminal.session_name.clone();
+                    }
                 }
-                if term_data.session_name != terminal.session_name {
-                    term_data.session_name = terminal.session_name.clone();
-                }
+                tab_data.active_pane = tab.active_pane;
+                tab_data.root = tab.root.clone();
             }
         }
         self.state.save().map_err(|error| error.to_string())
@@ -533,6 +565,14 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The PTY entity under the active pane of the active tab.
+    fn active_term_entity(&self) -> Option<Entity<PtyTerminal>> {
+        let ws_idx = self.state.active_workspace;
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let tab = self.terminals.get(ws_idx)?.get(ws.active_term)?;
+        tab.entities.get(tab.active_pane).cloned()
+    }
+
     pub fn add_dir(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = "Workspace".to_string();
 
@@ -545,29 +585,36 @@ impl Workspace {
         let session_name = term.read(cx).session_name.clone();
         let new_ws = crate::state::WorkspaceData {
             name: format!("{} {}", name, self.state.workspaces.len() + 1),
-            terminals: vec![crate::state::TerminalData {
+            terminals: vec![TabData::single(crate::state::TerminalData {
                 name,
                 cwd: cwd.clone(),
                 session_name,
-            }],
+            })],
             active_term: 0,
         };
         self.state.workspaces.push(new_ws);
         self.state.active_workspace = self.state.workspaces.len() - 1;
 
         cx.observe(&term, |_, _, cx| cx.notify()).detach();
-        self.terminals.push(vec![term]);
+        self.terminals.push(vec![TabPanes {
+            entities: vec![term],
+            active_pane: 0,
+            root: SplitNode::Leaf(0),
+            name: String::new(),
+        }]);
         self.state.save().ok();
         cx.notify();
     }
 
     pub fn close_tab(&mut self, ws_idx: usize, tab_idx: usize, cx: &mut Context<Self>) {
-        if let Some(term) = self
+        if let Some(tab) = self
             .terminals
             .get(ws_idx)
             .and_then(|terms| terms.get(tab_idx))
         {
-            term.update(cx, |term, _| term.shutdown());
+            for entity in &tab.entities {
+                entity.update(cx, |term, _| term.shutdown());
+            }
         }
         if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
             if ws.terminals.len() > 1 {
@@ -602,32 +649,89 @@ impl Workspace {
     }
 
     fn active_screen_size(&self, cx: &App) -> (u16, u16) {
-        let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term) = self
-                .terminals
-                .get(ws_idx)
-                .and_then(|t| t.get(ws.active_term))
-        {
+        if let Some(term) = self.active_term_entity() {
             return term.read(cx).size();
         }
         (24, 80)
     }
 
     fn active_cursor(&self, cx: &App) -> Option<(u16, u16)> {
+        let term = self.active_term_entity()?;
+        term.read(cx).cursor_position()
+    }
+
+    /// Available terminal area (px) after sidebar/title/tab chrome.
+    pub(crate) fn terminal_area_for_window(viewport: Size<Pixels>) -> (f32, f32) {
+        let w = (f32::from(viewport.width) - SIDEBAR_WIDTH).max(10.0);
+        let h = (f32::from(viewport.height) - TITLE_BAR_HEIGHT - TAB_BAR_HEIGHT).max(10.0);
+        (w, h)
+    }
+
+    /// Grid size for an explicit pixel area. The full-window path feeds the
+    /// whole content area; split panes feed their own rect share.
+    pub(crate) fn terminal_size_for_area(
+        avail_w: f32,
+        avail_h: f32,
+        cell_w: f32,
+        font_size: f32,
+    ) -> (u16, u16) {
+        let cell_h = font_size * (20.0 / 14.0);
+        let cols = ((avail_w - PANE_PAD * 2.0) / cell_w).max(10.0) as u16;
+        let rows = ((avail_h - PANE_PAD * 2.0) / cell_h).max(10.0) as u16;
+        (rows, cols)
+    }
+
+    /// Text-area origin (px, window coords) of a pane in the active tab:
+    /// content origin + split-tree allocation + per-leaf padding.
+    pub(crate) fn pane_text_origin(&self, window: &Window, pane_idx: usize) -> Option<(f32, f32)> {
+        let (avail_w, avail_h) = Self::terminal_area_for_window(window.viewport_size());
+        let ws = self.state.workspaces.get(self.state.active_workspace)?;
+        let tab = ws.terminals.get(ws.active_term)?;
+        let (_, x, y, _, _) = tab
+            .allocations(avail_w, avail_h)
+            .into_iter()
+            .find(|(i, _, _, _, _)| *i == pane_idx)?;
+        Some((
+            SIDEBAR_WIDTH + x + PANE_PAD,
+            TITLE_BAR_HEIGHT + TAB_BAR_HEIGHT + y + PANE_PAD,
+        ))
+    }
+
+    /// Focused pane index of the active tab.
+    fn focused_pane_idx(&self) -> usize {
         let ws_idx = self.state.active_workspace;
-        let ws = self.state.workspaces.get(ws_idx)?;
-        let term = self.terminals.get(ws_idx)?.get(ws.active_term)?.read(cx);
-        term.cursor_position()
+        self.terminals
+            .get(ws_idx)
+            .and_then(|tabs| {
+                self.state
+                    .workspaces
+                    .get(ws_idx)
+                    .and_then(|ws| tabs.get(ws.active_term))
+            })
+            .map(|tab| tab.active_pane)
+            .unwrap_or(0)
     }
 
     pub fn cell_at(&self, pos: gpui::Point<gpui::Pixels>, cx: &App) -> (u16, u16) {
+        self.cell_at_with_origin(
+            pos,
+            SIDEBAR_WIDTH + PANE_PAD,
+            TITLE_BAR_HEIGHT + TAB_BAR_HEIGHT + PANE_PAD,
+            cx,
+        )
+    }
+
+    pub(crate) fn cell_at_with_origin(
+        &self,
+        pos: gpui::Point<gpui::Pixels>,
+        origin_x: f32,
+        origin_y: f32,
+        cx: &App,
+    ) -> (u16, u16) {
         let font_size = self.state.font_size;
         let cell_w = Self::terminal_cell_width_from_app(cx, font_size);
         let cell_h = font_size * (20.0 / 14.0);
         let (rows, cols) = self.active_screen_size(cx);
-        let origin_x = SIDEBAR_WIDTH + PANE_PAD;
-        let origin_y = TITLE_BAR_HEIGHT + TAB_BAR_HEIGHT + PANE_PAD;
         let col = (((f32::from(pos.x) - origin_x) / cell_w).floor()).clamp(0.0, (cols as f32) - 1.0)
             as u16;
         let row = (((f32::from(pos.y) - origin_y) / cell_h).floor()).clamp(0.0, (rows as f32) - 1.0)
@@ -637,10 +741,8 @@ impl Workspace {
 
     pub fn selected_text(&self, cx: &App) -> Option<String> {
         let (start, end) = self.selection?;
-        let ws_idx = self.state.active_workspace;
-        let ws = self.state.workspaces.get(ws_idx)?;
-        let term = self.terminals.get(ws_idx)?.get(ws.active_term)?.read(cx);
-        Some(term.text_in_range(start, end))
+        let term = self.active_term_entity()?;
+        Some(term.read(cx).text_in_range(start, end))
     }
 
     pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
@@ -671,25 +773,13 @@ impl Workspace {
     }
 
     pub fn write_active(&mut self, bytes: &[u8], cx: &mut App) {
-        let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term) = self
-                .terminals
-                .get(ws_idx)
-                .and_then(|t| t.get(ws.active_term))
-        {
+        if let Some(term) = self.active_term_entity() {
             term.update(cx, |term, _| term.write(bytes));
         }
     }
 
     fn write_active_text(&mut self, text: &str, cx: &mut App) {
-        let ws_idx = self.state.active_workspace;
-        if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term) = self
-                .terminals
-                .get(ws_idx)
-                .and_then(|t| t.get(ws.active_term))
-        {
+        if let Some(term) = self.active_term_entity() {
             term.update(cx, |term, _| term.write_text(text));
         }
     }
@@ -702,40 +792,49 @@ impl Workspace {
         }
     }
 
-    pub fn on_terminal_mouse_down(
+    /// Mouse handlers are bound per split pane. Down focuses the clicked pane
+    /// first, then starts selection in it; move/up operate on the focused
+    /// pane so drags crossing pane boundaries stay coherent.
+    pub fn on_pane_mouse_down(
         &mut self,
+        pane_idx: usize,
         event: &gpui::MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.focus_pane(pane_idx, cx);
         if event.button == gpui::MouseButton::Right {
             self.paste_clipboard(cx);
             return;
         }
-        if event.button == gpui::MouseButton::Left {
-            let cell = self.cell_at(event.position, cx);
+        if event.button == gpui::MouseButton::Left
+            && let Some((origin_x, origin_y)) = self.pane_text_origin(window, pane_idx)
+        {
+            let cell = self.cell_at_with_origin(event.position, origin_x, origin_y, cx);
             self.selecting = true;
             self.selection = Some((cell, cell));
             cx.notify();
         }
     }
 
-    pub fn on_terminal_mouse_move(
+    pub fn on_pane_mouse_move(
         &mut self,
         event: &gpui::MouseMoveEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.selecting
             && let Some((start, _)) = self.selection
+            && let Some((origin_x, origin_y)) =
+                self.pane_text_origin(window, self.focused_pane_idx())
         {
-            let cell = self.cell_at(event.position, cx);
+            let cell = self.cell_at_with_origin(event.position, origin_x, origin_y, cx);
             self.selection = Some((start, cell));
             cx.notify();
         }
     }
 
-    pub fn on_terminal_mouse_up(
+    pub fn on_pane_mouse_up(
         &mut self,
         _event: &gpui::MouseUpEvent,
         _window: &mut Window,
@@ -758,13 +857,12 @@ impl Workspace {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event.modifiers.platform {
+        if ui::shortcut_modifier(&event.modifiers) {
             let delta = f32::from(event.delta.pixel_delta(px(16.0)).y);
             self.adjust_font_size(delta * 0.1, cx);
             return;
         }
 
-        let ws_idx = self.state.active_workspace;
         let font_size = self.state.font_size;
         let cell_h = font_size * (20.0 / 14.0);
         let delta_pixels = event.delta.pixel_delta(px(font_size)).y;
@@ -772,12 +870,7 @@ impl Workspace {
         // time rather than accumulating many tiny sub-line deltas.
         let delta_lines = f32::from(delta_pixels) / cell_h * 3.0;
 
-        if let Some(ws) = self.state.workspaces.get(ws_idx)
-            && let Some(term_entity) = self
-                .terminals
-                .get(ws_idx)
-                .and_then(|terms| terms.get(ws.active_term))
-        {
+        if let Some(term_entity) = self.active_term_entity() {
             term_entity.update(cx, |term, _| {
                 term.scroll(delta_lines);
             });
@@ -881,7 +974,7 @@ impl Workspace {
             return;
         }
 
-        if event.keystroke.modifiers.platform {
+        if ui::shortcut_modifier(&event.keystroke.modifiers) {
             match event.keystroke.key.as_str() {
                 "=" | "+" => {
                     self.adjust_font_size(1.0, cx);
@@ -898,9 +991,21 @@ impl Workspace {
                     return;
                 }
                 "c" => {
-                    self.copy_selection(cx);
-                    cx.stop_propagation();
-                    return;
+                    // Copy when something is selected. Ctrl+C with no
+                    // selection falls through to the shell as SIGINT (0x03);
+                    // Cmd+C on macOS is swallowed as before.
+                    let has_text = self
+                        .selected_text(cx)
+                        .is_some_and(|text| !text.trim().is_empty());
+                    if has_text {
+                        self.copy_selection(cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if !event.keystroke.modifiers.control {
+                        cx.stop_propagation();
+                        return;
+                    }
                 }
                 "a" => {
                     // Select the entire visible screen, like Cmd+A in other
@@ -934,9 +1039,29 @@ impl Workspace {
                     return;
                 }
                 "w" => {
-                    if let Some(ws) = self.state.workspaces.get(ws_idx) {
-                        self.delete_term(ws.active_term, cx);
-                    }
+                    self.close_active_pane_or_tab(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "d" | "D" => {
+                    // Cmd+D splits side-by-side, Cmd+Shift+D stacks.
+                    // (Shift may arrive folded into the key as "D".)
+                    let dir = if event.keystroke.modifiers.shift {
+                        SplitDir::Horizontal
+                    } else {
+                        SplitDir::Vertical
+                    };
+                    self.split_active_pane(dir, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "[" => {
+                    self.cycle_active_pane(-1, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "]" => {
+                    self.cycle_active_pane(1, cx);
                     cx.stop_propagation();
                     return;
                 }
@@ -944,46 +1069,39 @@ impl Workspace {
             }
         }
 
-        if let Some(ws) = self.state.workspaces.get(ws_idx) {
-            let term_idx = ws.active_term;
-            if let Some(term_entity) = self
-                .terminals
-                .get(ws_idx)
-                .and_then(|terms| terms.get(term_idx))
-            {
-                let key = event.keystroke.key.as_str();
-                let modifiers = &event.keystroke.modifiers;
+        if let Some(term_entity) = self.active_term_entity() {
+            let key = event.keystroke.key.as_str();
+            let modifiers = &event.keystroke.modifiers;
 
-                let bytes = match key {
-                    "enter" => vec![b'\r'],
-                    "backspace" => vec![0x7f],
-                    "tab" => vec![b'\t'],
-                    "escape" => vec![0x1b],
-                    "up" => vec![0x1b, b'[', b'A'],
-                    "down" => vec![0x1b, b'[', b'B'],
-                    "right" => vec![0x1b, b'[', b'C'],
-                    "left" => vec![0x1b, b'[', b'D'],
-                    "space" => vec![b' '],
-                    _ if modifiers.control && key.chars().count() == 1 => {
-                        let c = key.chars().next().unwrap();
-                        if c.is_ascii_lowercase() {
-                            vec![(c as u8) - b'a' + 1]
-                        } else {
-                            vec![]
-                        }
+            let bytes = match key {
+                "enter" => vec![b'\r'],
+                "backspace" => vec![0x7f],
+                "tab" => vec![b'\t'],
+                "escape" => vec![0x1b],
+                "up" => vec![0x1b, b'[', b'A'],
+                "down" => vec![0x1b, b'[', b'B'],
+                "right" => vec![0x1b, b'[', b'C'],
+                "left" => vec![0x1b, b'[', b'D'],
+                "space" => vec![b' '],
+                _ if modifiers.control && !modifiers.alt && key.chars().count() == 1 => {
+                    let c = key.chars().next().unwrap();
+                    if c.is_ascii_lowercase() {
+                        vec![(c as u8) - b'a' + 1]
+                    } else {
+                        vec![]
                     }
-                    _ => vec![],
-                };
-
-                if !bytes.is_empty() {
-                    term_entity.update(cx, |term, _| {
-                        term.write(&bytes);
-                    });
-                    // Prevent GPUI's tab focus-traversal (and other default
-                    // key handling) from swallowing keys like Tab/arrows so
-                    // they reach the shell.
-                    cx.stop_propagation();
                 }
+                _ => vec![],
+            };
+
+            if !bytes.is_empty() {
+                term_entity.update(cx, |term, _| {
+                    term.write(&bytes);
+                });
+                // Prevent GPUI's tab focus-traversal (and other default
+                // key handling) from swallowing keys like Tab/arrows so
+                // they reach the shell.
+                cx.stop_propagation();
             }
         }
     }
@@ -1028,9 +1146,11 @@ impl Workspace {
 
     pub fn delete_dir(&mut self, idx: usize, cx: &mut Context<Self>) {
         if self.state.workspaces.len() > 1 {
-            if let Some(terms) = self.terminals.get(idx) {
-                for term in terms {
-                    term.update(cx, |term, _| term.shutdown());
+            if let Some(tabs) = self.terminals.get(idx) {
+                for tab in tabs {
+                    for term in &tab.entities {
+                        term.update(cx, |term, _| term.shutdown());
+                    }
                 }
             }
             self.state.workspaces.remove(idx);
@@ -1109,16 +1229,195 @@ impl Workspace {
         let session_name = term.read(cx).session_name.clone();
 
         if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
-            ws.terminals.push(crate::state::TerminalData {
-                name,
-                cwd,
-                session_name,
-            });
+            ws.terminals
+                .push(TabData::single(crate::state::TerminalData {
+                    name: name.clone(),
+                    cwd,
+                    session_name,
+                }));
             ws.active_term = ws.terminals.len() - 1;
-            self.terminals[ws_idx].push(term);
+            self.terminals[ws_idx].push(TabPanes {
+                entities: vec![term],
+                active_pane: 0,
+                root: SplitNode::Leaf(0),
+                name,
+            });
             self.state.save().ok();
             cx.notify();
         }
+    }
+
+    /// Splits the active pane of the active tab. The new pane inherits the
+    /// active pane's cwd and takes focus.
+    pub fn split_active_pane(
+        &mut self,
+        dir: SplitDir,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ws_idx = self.state.active_workspace;
+        let Some(tab_idx) = self.state.workspaces.get(ws_idx).map(|ws| ws.active_term) else {
+            return;
+        };
+        let cwd = self.get_active_terminal_cwd(cx);
+        let (rows, cols) =
+            Self::terminal_size_for_window(window.viewport_size(), self.state.font_size, window);
+        let colors = self.terminal_colors.clone();
+        let term =
+            cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
+        cx.observe(&term, |_, _, cx| cx.notify()).detach();
+        let session_name = term.read(cx).session_name.clone();
+
+        let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
+            return;
+        };
+        let Some(tab_data) = ws.terminals.get_mut(tab_idx) else {
+            return;
+        };
+        let Some(tab) = self
+            .terminals
+            .get_mut(ws_idx)
+            .and_then(|tabs| tabs.get_mut(tab_idx))
+        else {
+            return;
+        };
+        let active = tab_data
+            .active_pane
+            .min(tab_data.panes.len().saturating_sub(1));
+        let new_idx = tab_data.split_pane(active, dir);
+        // Point the new pane at the session we just spawned.
+        if let Some(pane) = tab_data.panes.get_mut(new_idx) {
+            pane.session_name = session_name;
+        }
+        tab.entities.push(term);
+        tab.active_pane = new_idx;
+        tab.root = tab_data.root.clone();
+        self.state.save().ok();
+        cx.notify();
+    }
+
+    /// Focuses `pane_idx` within the active tab.
+    pub fn focus_pane(&mut self, pane_idx: usize, cx: &mut Context<Self>) {
+        let ws_idx = self.state.active_workspace;
+        let (tab_idx, len) = match self.state.workspaces.get(ws_idx) {
+            Some(ws) => (
+                ws.active_term,
+                ws.terminals.get(ws.active_term).map(|t| t.panes.len()),
+            ),
+            None => return,
+        };
+        let Some(len) = len else { return };
+        if pane_idx >= len {
+            return;
+        }
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
+            && let Some(tab_data) = ws.terminals.get_mut(tab_idx)
+        {
+            tab_data.active_pane = pane_idx;
+        }
+        if let Some(tab) = self
+            .terminals
+            .get_mut(ws_idx)
+            .and_then(|tabs| tabs.get_mut(tab_idx))
+        {
+            tab.active_pane = pane_idx.min(tab.entities.len().saturating_sub(1));
+        }
+        self.selection = None;
+        self.state.save().ok();
+        cx.notify();
+    }
+
+    /// Cycles pane focus within the active tab.
+    pub fn cycle_active_pane(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let ws_idx = self.state.active_workspace;
+        let (tab_idx, len) = match self.state.workspaces.get(ws_idx) {
+            Some(ws) => (
+                ws.active_term,
+                ws.terminals
+                    .get(ws.active_term)
+                    .map(|t| t.panes.len())
+                    .unwrap_or(0),
+            ),
+            None => return,
+        };
+        if len < 2 {
+            return;
+        }
+        let cur = self
+            .terminals
+            .get(ws_idx)
+            .and_then(|tabs| tabs.get(tab_idx))
+            .map(|t| t.active_pane)
+            .unwrap_or(0);
+        let next = (cur as isize + delta).rem_euclid(len as isize) as usize;
+        self.focus_pane(next, cx);
+    }
+
+    /// Closes the active pane; when it was the tab's last pane, closes the
+    /// tab instead (matching the old Cmd+W behaviour).
+    pub fn close_active_pane_or_tab(&mut self, cx: &mut Context<Self>) {
+        let ws_idx = self.state.active_workspace;
+        let tab_idx = match self.state.workspaces.get(ws_idx) {
+            Some(ws) => ws.active_term,
+            None => return,
+        };
+        let pane_count = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.terminals.get(tab_idx))
+            .map(|t| t.panes.len())
+            .unwrap_or(0);
+        if pane_count > 1 {
+            self.close_pane(ws_idx, tab_idx, None, cx);
+        } else if let Some(ws) = self.state.workspaces.get(ws_idx) {
+            self.delete_term(ws.active_term, cx);
+        }
+    }
+
+    /// Closes one pane of a tab (default: the focused one), collapsing the
+    /// split tree around it.
+    pub fn close_pane(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        pane_idx: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let pane_idx = pane_idx.unwrap_or_else(|| {
+            self.terminals
+                .get(ws_idx)
+                .and_then(|tabs| tabs.get(tab_idx))
+                .map(|t| t.active_pane)
+                .unwrap_or(0)
+        });
+        if let Some(tab) = self
+            .terminals
+            .get_mut(ws_idx)
+            .and_then(|tabs| tabs.get_mut(tab_idx))
+            && pane_idx < tab.entities.len()
+        {
+            tab.entities[pane_idx].update(cx, |term, _| term.shutdown());
+            tab.entities.remove(pane_idx);
+        }
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
+            && let Some(tab_data) = ws.terminals.get_mut(tab_idx)
+        {
+            if !tab_data.close_pane(pane_idx) {
+                return;
+            }
+            if let Some(tab) = self
+                .terminals
+                .get_mut(ws_idx)
+                .and_then(|tabs| tabs.get_mut(tab_idx))
+            {
+                tab.active_pane = tab_data.active_pane;
+                tab.root = tab_data.root.clone();
+            }
+        }
+        self.selection = None;
+        self.state.save().ok();
+        cx.notify();
     }
 
     pub fn start_renaming_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
