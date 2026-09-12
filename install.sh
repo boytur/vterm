@@ -148,10 +148,15 @@ elif [[ "$IS_WINDOWS" == "true" ]]; then
   chmod +x "$TARGET_EXE" 2>/dev/null || true
   rm -f "$BACKUP_EXE" 2>/dev/null || true
 
-  # Add to User PATH and create Start Menu shortcut via PowerShell if available
+  # Clear Windows Mark of the Web quarantine, add to User PATH, and create Start Menu shortcut
   if command -v powershell.exe >/dev/null 2>&1; then
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
       \$dir = '$WIN_INSTALL_DIR'
+      \$exe = Join-Path \$dir '${APP_NAME}.exe'
+      if (Test-Path \$exe) {
+        Unblock-File -Path \$exe -ErrorAction SilentlyContinue
+      }
+
       \$p = [Environment]::GetEnvironmentVariable('Path', 'User')
       if ((\$p -split ';') -notcontains \$dir) {
         [Environment]::SetEnvironmentVariable('Path', (\$p.TrimEnd(';') + ';' + \$dir), 'User')
@@ -162,13 +167,15 @@ elif [[ "$IS_WINDOWS" == "true" ]]; then
       \$shortcutDir = Join-Path \$startMenu 'Programs'
       if (Test-Path \$shortcutDir) {
         \$shortcut = \$ws.CreateShortcut((Join-Path \$shortcutDir '${APP_NAME}.lnk'))
-        \$shortcut.TargetPath = (Join-Path \$dir '${APP_NAME}.exe')
+        \$shortcut.TargetPath = \$exe
+        \$shortcut.IconLocation = \$exe + ',0'
         \$shortcut.WorkingDirectory = [Environment]::GetFolderPath('UserProfile')
         \$shortcut.Description = 'vterm terminal emulator'
         \$shortcut.Save()
       }
     " >/dev/null 2>&1 || true
   fi
+
 
   echo "Done. Installed ${APP_NAME} to: ${WIN_INSTALL_DIR}\\${APP_NAME}.exe"
   echo "Start Menu shortcut created: ${APP_NAME}"

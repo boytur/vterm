@@ -6336,6 +6336,7 @@ dependencies = [
 name = "vterm"
 version = "0.5.0"
 dependencies = [
+ "embed-resource",
  "gpui",
  "workspace",
 ]
