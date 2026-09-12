@@ -10,27 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-test:
-    name: Build & Test (${{ matrix.os }})
-    # The self-hosted Windows runner must never execute untrusted code:
-    # PRs from forks skip that leg (hosted macOS coverage still applies).
-    if: >-
-      matrix.os != 'self-hosted-windows' ||
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            runs-on: '"macos-latest"'
-          # Warm self-hosted box: incremental target dir, no queue/provision.
-          # Register with: ./config.cmd --url https://github.com/boytur/vterm
-          #   --token <fresh-token> --labels vterm-win
-          - os: self-hosted-windows
-            runs-on: '["self-hosted", "Windows", "X64", "vterm-win"]'
-    # fromJSON: runs-on cannot expand an array-typed matrix value directly.
-    runs-on: ${{ fromJSON(matrix.runs-on) }}
+  build-and-test-macos:
+    name: Build & Test (macos-latest)
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -47,7 +29,50 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: macos-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Test
+        run: cargo test --verbose
+
+  build-and-test-windows:
+    name: Build & Test (self-hosted-windows)
+    # The self-hosted runner must never execute untrusted code: PRs from
+    # forks skip this job (hosted macOS coverage still applies).
+    # NOTE: `matrix` is not a valid context in job-level `if`, hence two
+    # explicit jobs instead of a matrix.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Warm self-hosted box: incremental target dir, no queue/provision.
+    # Register with: ./config.cmd --url https://github.com/boytur/vterm
+    #   --token <fresh-token> --labels vterm-win
+    runs-on: [self-hosted, Windows, X64, vterm-win]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
         run: cargo fmt --check
