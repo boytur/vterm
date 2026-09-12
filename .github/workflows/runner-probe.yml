@@ -1,0 +1,9 @@
+name: runner-probe
+# TEMPORARY: isolates the self-hosted runner crash. Delete after diagnosis.
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: [self-hosted, Windows, X64, vterm-win]
+    steps:
+      - run: echo hello-from-vterm-win
