@@ -105,7 +105,7 @@ impl TextField {
             return consumed;
         }
         match key {
-            "c" | "x" if modifiers.platform => {
+            "c" | "x" if crate::shortcut_modifier(modifiers) => {
                 let (start, end) = match self.selection() {
                     Some((s, e)) => (s, e),
                     None => return true,
@@ -118,7 +118,7 @@ impl TextField {
                 }
                 true
             }
-            "v" if modifiers.platform => {
+            "v" if crate::shortcut_modifier(modifiers) => {
                 if let Some(item) = cx.read_from_clipboard()
                     && let Some(text) = item.text()
                 {
@@ -173,7 +173,7 @@ impl TextField {
                 self.caret = self.value.len();
                 Some(true)
             }
-            "a" if modifiers.platform => {
+            "a" if crate::shortcut_modifier(modifiers) => {
                 self.select_all();
                 Some(true)
             }
@@ -310,5 +310,22 @@ mod tests {
         let mut field = TextField::new("สวัสดี");
         assert_eq!(field.apply_simple_key("backspace", &no_mods()), Some(true));
         assert_eq!(field.value(), "สวัสด");
+    }
+
+    #[test]
+    fn ctrl_a_selects_all_off_macos() {
+        // Ctrl is the menu modifier everywhere except macOS.
+        let mut field = TextField::new("hi");
+        let ctrl = Modifiers {
+            control: true,
+            ..no_mods()
+        };
+        field.apply_simple_key("a", &ctrl);
+        field.apply_simple_key("backspace", &no_mods());
+        if cfg!(target_os = "macos") {
+            assert_eq!(field.value(), "h", "Ctrl+A must not select on macOS");
+        } else {
+            assert_eq!(field.value(), "", "Ctrl+A must select all off macOS");
+        }
     }
 }

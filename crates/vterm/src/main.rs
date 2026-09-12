@@ -52,6 +52,10 @@ fn open_window(cx: &mut App) {
     let app_name = std::env::var("VTERM_APP_NAME").unwrap_or_else(|_| "vterm".to_string());
     let app_version = std::env::var("VTERM_DEV_VERSION")
         .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+    // On macOS every TitlebarOptions field above is specified, so the struct
+    // update is needless there — but dropping it breaks other platforms
+    // where `traffic_light_position` is compiled out.
+    #[allow(clippy::needless_update)]
     let options = WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some(format!("{app_name} v{app_version}").into()),

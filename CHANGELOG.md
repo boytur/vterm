@@ -3,6 +3,13 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
+- Add split panes: divide any tab side-by-side (`⌘ D`) or stacked (`⌘ ⇧ D`), click or `⌘ [` / `⌘ ]` to focus, `⌘ W` closes the pane (or the tab when only one remains). Layouts persist across restarts and old single-pane state files keep loading.
+- Enable all keyboard shortcuts on Windows via Ctrl (`Ctrl+T/D/W`, `Ctrl+C` copies when text is selected and sends SIGINT otherwise) and show `Ctrl+…` hints in Settings; AltGr combos no longer fire shortcuts or send stray control codes.
+
+
+## [0.6.0] - 2026-09-12
+
+
 - Add Windows support to the curl install script (install.sh) and add native install.ps1 for PowerShell.
 - Embed application icon and version metadata into Windows vterm.exe binary.
 - Build and package Windows release zip in the CD workflow.

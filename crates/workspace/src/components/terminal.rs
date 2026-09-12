@@ -1,7 +1,9 @@
+use crate::state::{SplitDir, SplitNode};
 use crate::workspace::{TERMINAL_FONT, Workspace};
 use gpui::prelude::*;
 use gpui::*;
-use terminal::{CellColor, TermCell, palette_rgb};
+use std::collections::HashMap;
+use terminal::{CellColor, PtyTerminal, TermCell, palette_rgb};
 
 // Vertical nudge applied to each grid line so glyphs sit centered inside their
 // cell. Overlays (selection, IME, cursor) must add the same offset or they
@@ -372,6 +374,269 @@ pub fn render_terminal_view(
     cx: &mut Context<Workspace>,
     viewport: gpui::Size<gpui::Pixels>,
 ) -> impl IntoElement {
+    let font_size = workspace.state.font_size;
+    let cell_w = Workspace::terminal_cell_width(window, font_size);
+    let (avail_w, avail_h) = Workspace::terminal_area_for_window(viewport);
+    let ws_idx = workspace.state.active_workspace;
+    let active = workspace
+        .state
+        .workspaces
+        .get(ws_idx)
+        .and_then(|ws| {
+            let tab_data = ws.terminals.get(ws.active_term)?;
+            let tab = workspace.terminals.get(ws_idx)?.get(ws.active_term)?;
+            Some((tab_data, tab))
+        })
+        // Guard against transient state/runtime disagreement.
+        .filter(|(tab_data, tab)| {
+            !tab_data.panes.is_empty()
+                && tab.entities.len() == tab_data.panes.len()
+                && tab_data.leaves().len() == tab_data.panes.len()
+        });
+
+    let content: gpui::AnyElement = match active {
+        Some((tab_data, tab)) if tab.entities.len() > 1 => render_split_tree(
+            workspace, window, cx, tab_data, tab, avail_w, avail_h, cell_w,
+        ),
+        Some((tab_data, tab)) => {
+            let pane_idx = match &tab_data.root {
+                SplitNode::Leaf(i) => *i,
+                _ => tab_data.active_pane,
+            };
+            match tab.entities.get(pane_idx) {
+                Some(entity) => {
+                    let (rows, cols) =
+                        Workspace::terminal_size_for_window(viewport, font_size, window);
+                    render_pane(
+                        workspace, window, cx, entity, rows, cols, pane_idx, false, false,
+                    )
+                    .into_any_element()
+                }
+                None => empty_pane(),
+            }
+        }
+        None => empty_pane(),
+    };
+
+    // Keyboard input is global: keystrokes always go to the focused pane.
+    let workspace_entity = cx.entity();
+    let focus_handle = workspace.focus_handle.clone();
+    let settings_open = workspace.settings_open;
+    div()
+        .relative()
+        .w_full()
+        .h_full()
+        .bg(workspace.state.theme.bg_main)
+        .font_family(TERMINAL_FONT)
+        .text_size(px(font_size))
+        .line_height(relative(20.0 / 14.0))
+        .overflow_hidden()
+        .child(content)
+        .when(!settings_open, move |this| {
+            this.child(
+                canvas(
+                    |_bounds, _window, _cx| {},
+                    move |bounds, _prepaint, window, cx| {
+                        window.handle_input(
+                            &focus_handle,
+                            ElementInputHandler::new(bounds, workspace_entity.clone()),
+                            cx,
+                        );
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            )
+        })
+}
+
+/// One empty frame for moments with no live terminal (all panes dead/missing).
+fn empty_pane() -> gpui::AnyElement {
+    div().w_full().h_full().into_any_element()
+}
+
+/// Multi-pane tab: lays the split tree out over the content area, one
+/// bordered leaf per pane. Ratios here mirror [`SplitNode`] allocation, so
+/// PTY sizes computed from the same rects match what is painted.
+#[allow(clippy::too_many_arguments)]
+fn render_split_tree(
+    workspace: &Workspace,
+    window: &gpui::Window,
+    cx: &mut Context<Workspace>,
+    tab_data: &crate::state::TabData,
+    tab: &crate::workspace::TabPanes,
+    avail_w: f32,
+    avail_h: f32,
+    cell_w: f32,
+) -> gpui::AnyElement {
+    let font_size = workspace.state.font_size;
+    let mut sizes: HashMap<usize, (u16, u16)> = HashMap::new();
+    for (pane_idx, _, _, w, h) in tab_data.allocations(avail_w, avail_h) {
+        // 1px focus border on every side eats 2px of text room.
+        sizes.insert(
+            pane_idx,
+            Workspace::terminal_size_for_area(w - 2.0, h - 2.0, cell_w, font_size),
+        );
+    }
+    render_split_node(workspace, window, cx, tab, &tab_data.root, &sizes).into_any_element()
+}
+
+fn render_split_node(
+    workspace: &Workspace,
+    window: &gpui::Window,
+    cx: &mut Context<Workspace>,
+    tab: &crate::workspace::TabPanes,
+    node: &SplitNode,
+    sizes: &HashMap<usize, (u16, u16)>,
+) -> Div {
+    match node {
+        SplitNode::Leaf(pane_idx) => match tab.entities.get(*pane_idx) {
+            Some(entity) => {
+                let (rows, cols) = sizes.get(pane_idx).copied().unwrap_or((24, 80));
+                let focused = *pane_idx == tab.active_pane;
+                render_pane(
+                    workspace, window, cx, entity, rows, cols, *pane_idx, focused, true,
+                )
+            }
+            None => div().w_full().h_full(),
+        },
+        SplitNode::Split {
+            dir,
+            ratio,
+            first,
+            second,
+        } => {
+            let r = ratio.clamp(0.15, 0.85);
+            let first_el = render_split_node(workspace, window, cx, tab, first, sizes);
+            let second_el = render_split_node(workspace, window, cx, tab, second, sizes);
+            match dir {
+                SplitDir::Vertical => div()
+                    .flex()
+                    .flex_row()
+                    .w_full()
+                    .h_full()
+                    .overflow_hidden()
+                    .child(first_el.w(relative(r)).h_full())
+                    .child(second_el.w(relative(1.0 - r)).h_full()),
+                SplitDir::Horizontal => div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .h_full()
+                    .overflow_hidden()
+                    .child(first_el.h(relative(r)).w_full())
+                    .child(second_el.h(relative(1.0 - r)).w_full()),
+            }
+        }
+    }
+}
+
+/// One terminal leaf: padded grid, focus ring, and per-pane mouse handling.
+/// `bordered` is false for the single-pane fast path (pixel-identical to the
+/// pre-split renderer); split leaves always draw the 1px focus ring.
+#[allow(clippy::too_many_arguments)]
+fn render_pane(
+    workspace: &Workspace,
+    window: &gpui::Window,
+    cx: &mut Context<Workspace>,
+    term_entity: &Entity<PtyTerminal>,
+    expected_rows: u16,
+    expected_cols: u16,
+    pane_idx: usize,
+    focused: bool,
+    bordered: bool,
+) -> Div {
+    let theme = &workspace.state.theme;
+    let (
+        pal,
+        selection_overlay,
+        lines_elements,
+        box_drawing_elements,
+        block_elements,
+        scrollbar_element,
+        ime_composition_overlay,
+    ) = render_pane_body(
+        workspace,
+        window,
+        cx,
+        term_entity,
+        expected_rows,
+        expected_cols,
+        // Single-pane tabs always own the selection; in split tabs only the
+        // focused leaf paints it.
+        !bordered || focused,
+    );
+    let border_color = if !bordered {
+        gpui::rgba(0x00000000)
+    } else if focused {
+        theme.accent
+    } else {
+        theme.border
+    };
+    div()
+        .relative()
+        .w_full()
+        .h_full()
+        .bg(gpui::rgb(pal.bg))
+        .px_4()
+        .pt_4()
+        .pb_4()
+        .when(bordered, |el| el.border_1().border_color(border_color))
+        .overflow_hidden()
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(move |this, event, window, cx| {
+                this.on_pane_mouse_down(pane_idx, event, window, cx);
+            }),
+        )
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(move |this, event, window, cx| {
+                this.on_pane_mouse_down(pane_idx, event, window, cx);
+            }),
+        )
+        .on_mouse_move(cx.listener(Workspace::on_pane_mouse_move))
+        .on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(Workspace::on_pane_mouse_up),
+        )
+        .on_mouse_up(
+            gpui::MouseButton::Right,
+            cx.listener(Workspace::on_pane_mouse_up),
+        )
+        .on_scroll_wheel(cx.listener(move |this, event, _window, cx| {
+            this.on_pane_scroll_wheel(pane_idx, event, cx);
+        }))
+        .child(selection_overlay)
+        .children(lines_elements)
+        .children(block_elements)
+        .children(box_drawing_elements)
+        .child(scrollbar_element)
+        .child(ime_composition_overlay)
+}
+
+/// The grid itself: snapshot → text runs, box-drawing segments, selection and
+/// scrollbar overlays. Shared by single-pane and split leaves so rendering
+/// can never drift between the two.
+fn render_pane_body(
+    workspace: &Workspace,
+    window: &gpui::Window,
+    cx: &mut Context<Workspace>,
+    term_entity: &Entity<PtyTerminal>,
+    expected_rows: u16,
+    expected_cols: u16,
+    // False for background split panes: the selection belongs to the focused
+    // pane, and painting it everywhere looks like every pane is selected.
+    draw_selection: bool,
+) -> (
+    Palette,
+    Div,
+    Vec<Div>,
+    Vec<gpui::AnyElement>,
+    Vec<gpui::AnyElement>,
+    Div,
+    Div,
+) {
     let theme = &workspace.state.theme;
     let font_size = workspace.state.font_size;
     let scale_factor = window.scale_factor();
@@ -382,34 +647,25 @@ pub fn render_terminal_view(
     let mut selection_overlay = div();
     let mut scrollbar_element = div();
     let mut ime_composition_overlay = div();
-    // Fallback for frames with no active terminal: the built-in dark palette.
-    let mut pal = Palette::from_channels(terminal::TerminalColors::dark().get());
 
-    if let Some(ws) = workspace
-        .state
-        .workspaces
-        .get(workspace.state.active_workspace)
-        && let Some(term_model) = workspace
-            .terminals
-            .get(workspace.state.active_workspace)
-            .and_then(|t| t.get(ws.active_term))
+    // Snapshot under one lock; the palette always matches what OSC queries
+    // answer because both read the shared TerminalColors handle.
+    let (snap, pal) = {
+        let term = term_entity.read(cx);
+        (term.snapshot(), Palette::from_channels(term.colors.get()))
+    };
+
     {
-        let term = term_model.read(cx);
-        let snap = term.snapshot();
-        pal = Palette::from_channels(term.colors.get());
-
         let rows_count = snap.rows;
         let cols_count = snap.cols;
 
         let cell_w = Workspace::terminal_cell_width(window, font_size);
         let cell_h = font_size * (20.0 / 14.0);
-        let (expected_rows, expected_cols) =
-            Workspace::terminal_size_for_window(viewport, font_size, window);
 
         if expected_cols != cols_count || expected_rows != rows_count {
-            let term_model = term_model.clone();
+            let term_entity = term_entity.clone();
             cx.defer(move |app| {
-                term_model.update(app, |term, cx| {
+                term_entity.update(app, |term, cx| {
                     term.resize(expected_rows, expected_cols);
                     cx.notify();
                 });
@@ -466,7 +722,7 @@ pub fn render_terminal_view(
                 .child(workspace.ime_composition.clone());
         }
 
-        if let Some(sel) = workspace.selection {
+        if draw_selection && let Some(sel) = workspace.selection {
             let ((c1, r1), (c2, r2)) = sel;
             let min_c = c1.min(c2);
             let max_c = c1.max(c2);
@@ -724,61 +980,15 @@ pub fn render_terminal_view(
         }
     }
 
-    let workspace_entity = cx.entity();
-    let focus_handle = workspace.focus_handle.clone();
-
-    div()
-        .relative()
-        .w_full()
-        .h_full()
-        .bg(gpui::rgb(pal.bg))
-        .px_4()
-        .pt_4()
-        .pb_4()
-        .font_family(TERMINAL_FONT)
-        .text_size(px(font_size))
-        .line_height(relative(20.0 / 14.0))
-        .overflow_hidden()
-        .on_mouse_down(
-            gpui::MouseButton::Left,
-            cx.listener(Workspace::on_terminal_mouse_down),
-        )
-        .on_mouse_down(
-            gpui::MouseButton::Right,
-            cx.listener(Workspace::on_terminal_mouse_down),
-        )
-        .on_mouse_move(cx.listener(Workspace::on_terminal_mouse_move))
-        .on_mouse_up(
-            gpui::MouseButton::Left,
-            cx.listener(Workspace::on_terminal_mouse_up),
-        )
-        .on_mouse_up(
-            gpui::MouseButton::Right,
-            cx.listener(Workspace::on_terminal_mouse_up),
-        )
-        .on_scroll_wheel(cx.listener(Workspace::on_terminal_scroll_wheel))
-        .child(selection_overlay)
-        .children(lines_elements)
-        .children(block_elements)
-        .children(box_drawing_elements)
-        .child(scrollbar_element)
-        .child(ime_composition_overlay)
-        .when(!workspace.settings_open, move |this| {
-            this.child(
-                canvas(
-                    |_bounds, _window, _cx| {},
-                    move |bounds, _prepaint, window, cx| {
-                        window.handle_input(
-                            &focus_handle,
-                            ElementInputHandler::new(bounds, workspace_entity.clone()),
-                            cx,
-                        );
-                    },
-                )
-                .absolute()
-                .inset_0(),
-            )
-        })
+    (
+        pal,
+        selection_overlay,
+        lines_elements,
+        box_drawing_elements,
+        block_elements,
+        scrollbar_element,
+        ime_composition_overlay,
+    )
 }
 
 #[cfg(test)]

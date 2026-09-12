@@ -230,7 +230,7 @@ fn render_terminal(workspace: &Workspace, cx: &mut Context<Workspace>) -> Div {
                         div()
                             .text_size(px(11.0))
                             .text_color(theme.text_muted)
-                            .child("⌘ + / ⌘ -"),
+                            .child(format!("{} / {}", shortcut_key("+"), shortcut_key("-"))),
                     ),
                 )
                 .child(
@@ -271,14 +271,51 @@ fn render_terminal(workspace: &Workspace, cx: &mut Context<Workspace>) -> Div {
                         .text_color(theme.text_muted)
                         .child("KEYBOARD SHORTCUTS"),
                 )
-                .child(shortcut_row("New terminal", "⌘ T", theme))
-                .child(shortcut_row("New workspace", "⌘ N", theme))
-                .child(shortcut_row("Close terminal", "⌘ W", theme))
-                .child(shortcut_row("Reset font size", "⌘ 0", theme)),
+                .child(shortcut_row("New terminal", shortcut_key("T"), theme))
+                .child(shortcut_row("New workspace", shortcut_key("N"), theme))
+                .child(shortcut_row(
+                    "Split pane side-by-side",
+                    shortcut_key("D"),
+                    theme,
+                ))
+                .child(shortcut_row(
+                    "Split pane stacked",
+                    shortcut_key("Shift+D"),
+                    theme,
+                ))
+                .child(shortcut_row(
+                    "Focus next/previous pane",
+                    format!("{} / {}", shortcut_key("]"), shortcut_key("[")),
+                    theme,
+                ))
+                .child(shortcut_row(
+                    "Close pane (or tab)",
+                    shortcut_key("W"),
+                    theme,
+                ))
+                .child(shortcut_row("Reset font size", shortcut_key("0"), theme)),
         )
 }
 
-fn shortcut_row(label: &'static str, shortcut: &'static str, theme: &Theme) -> Div {
+/// Menu-shortcut modifier glyph per platform (mirrors `ui::shortcut_modifier`).
+fn mod_glyph() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌘"
+    } else {
+        "Ctrl"
+    }
+}
+
+/// Renders a shortcut hint like "⌘ T" on macOS or "Ctrl+T" on Windows.
+fn shortcut_key(key: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("{} {key}", mod_glyph())
+    } else {
+        format!("{}+{key}", mod_glyph())
+    }
+}
+
+fn shortcut_row(label: &'static str, shortcut: String, theme: &Theme) -> Div {
     div()
         .flex()
         .justify_between()
