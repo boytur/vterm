@@ -41,6 +41,27 @@ struct Asset {
     browser_download_url: String,
 }
 
+/// Picks the auto-installable asset URL for `target_os` (`std::env::consts::OS`
+/// values: "macos", "windows", ...). macOS wants the `.dmg`, Windows wants
+/// the `*windows*.zip` from the CD workflow (any `.zip` as fallback).
+fn select_download_url(assets: &[Asset], target_os: &str) -> Option<String> {
+    match target_os {
+        "macos" => assets
+            .iter()
+            .find(|a| a.name.ends_with(".dmg"))
+            .map(|a| a.browser_download_url.clone()),
+        "windows" => assets
+            .iter()
+            .find(|a| {
+                let lower = a.name.to_lowercase();
+                lower.ends_with(".zip") && lower.contains("windows")
+            })
+            .or_else(|| assets.iter().find(|a| a.name.ends_with(".zip")))
+            .map(|a| a.browser_download_url.clone()),
+        _ => None,
+    }
+}
+
 /// Queries the GitHub "latest release" endpoint and returns update info when a
 /// newer version than the running build is available.
 pub fn check_for_update_detailed() -> Result<Option<UpdateInfo>, String> {
@@ -63,17 +84,7 @@ pub fn check_for_update_detailed() -> Result<Option<UpdateInfo>, String> {
         return Ok(None);
     }
 
-    let download = release
-        .assets
-        .iter()
-        .find(|a| {
-            if cfg!(target_os = "macos") {
-                a.name.ends_with(".dmg")
-            } else {
-                false
-            }
-        })
-        .map(|a| a.browser_download_url.clone());
+    let download = select_download_url(&release.assets, std::env::consts::OS);
     let download_url = download
         .clone()
         .unwrap_or_else(|| format!("https://github.com/{}/releases/latest", REPO));
@@ -105,7 +116,7 @@ pub fn download_update(
         return Err("no macOS disk image is available for this release".into());
     }
 
-    let dmg = download_to_temp(&info.download_url, &progress)?;
+    let dmg = download_to_temp(&info.download_url, &progress, "dmg")?;
     let mount = match attach_dmg(&dmg) {
         Ok(mount) => mount,
         Err(error) => {
@@ -119,12 +130,33 @@ pub fn download_update(
     result
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn download_update(
+    info: &UpdateInfo,
+    progress: async_channel::Sender<f32>,
+) -> Result<PathBuf, String> {
+    if !info.can_auto_install {
+        return Err("no Windows update archive is available for this release".into());
+    }
+
+    let zip_path = download_to_temp(&info.download_url, &progress, "zip")?;
+    let staged = std::env::temp_dir().join(format!(
+        "vterm-update-{}-{}.exe",
+        std::process::id(),
+        info.version
+    ));
+    let result = extract_exe_from_zip(&zip_path, &staged);
+    let _ = std::fs::remove_file(&zip_path);
+    result?;
+    Ok(staged)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn download_update(
     _info: &UpdateInfo,
     _progress: async_channel::Sender<f32>,
 ) -> Result<PathBuf, String> {
-    Err("automatic updates are currently supported on macOS only".into())
+    Err("automatic updates are currently supported on macOS and Windows only".into())
 }
 
 #[cfg(target_os = "macos")]
@@ -138,9 +170,72 @@ pub fn install_update(staged_app: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn install_update(staged_exe: &Path) -> Result<(), String> {
+    if !staged_exe.is_file() {
+        return Err("staged Windows update is missing".into());
+    }
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    // The running .exe is locked on Windows, so a helper batch file waits for
+    // this process to exit, swaps the binaries, relaunches, and deletes itself.
+    let script = windows_update_script(staged_exe, &current_exe, std::process::id());
+    let script_path =
+        std::env::temp_dir().join(format!("vterm-update-{}-install.bat", std::process::id()));
+    std::fs::write(&script_path, script).map_err(|e| e.to_string())?;
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "/MIN", "", &script_path.to_string_lossy()])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    std::process::exit(0);
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn install_update(_staged_app: &Path) -> Result<(), String> {
-    Err("automatic updates are currently supported on macOS only".into())
+    Err("automatic updates are currently supported on macOS and Windows only".into())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_update_script(staged: &Path, current: &Path, pid: u32) -> String {
+    // Quotes guard spaces in temp/install paths. `move /Y` overwrites the old
+    // exe once the PID is gone; `start` relaunches without holding the batch.
+    format!(
+        "@echo off\r\n:wait\r\ntasklist /FI \"PID eq {pid}\" /FO CSV 2>nul | findstr /I \"{pid}\" >nul && (timeout /t 1 /nobreak >nul & goto wait)\r\nmove /Y \"{staged}\" \"{current}\"\r\nstart \"\" \"{current}\"\r\ndel \"%~f0\"\r\n",
+        staged = staged.display(),
+        current = current.display(),
+        pid = pid,
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn extract_exe_from_zip(zip_path: &Path, dest_exe: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    // CD zips a single vterm.exe at the root; prefer an exact match but
+    // accept any exe so renamed artifacts still update.
+    let mut fallback: Option<usize> = None;
+    let mut preferred: Option<usize> = None;
+    for i in 0..archive.len() {
+        let (name, is_dir) = {
+            let entry = archive.by_index(i).map_err(|e| e.to_string())?;
+            (entry.name().to_string(), entry.is_dir())
+        };
+        if is_dir || !name.to_lowercase().ends_with(".exe") {
+            continue;
+        }
+        let lower = name.to_lowercase().replace('\\', "/");
+        if lower == "vterm.exe" || lower.ends_with("/vterm.exe") {
+            preferred = Some(i);
+            break;
+        }
+        fallback.get_or_insert(i);
+    }
+    let index = preferred
+        .or(fallback)
+        .ok_or_else(|| "update archive does not contain vterm.exe".to_string())?;
+    let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
+    let mut out = std::fs::File::create(dest_exe).map_err(|e| e.to_string())?;
+    std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -154,8 +249,12 @@ fn find_app_bundle(exe: &Path) -> Option<PathBuf> {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn download_to_temp(url: &str, progress: &async_channel::Sender<f32>) -> Result<PathBuf, String> {
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn download_to_temp(
+    url: &str,
+    progress: &async_channel::Sender<f32>,
+    extension: &str,
+) -> Result<PathBuf, String> {
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(60))
         .user_agent("vterm")
@@ -166,7 +265,8 @@ fn download_to_temp(url: &str, progress: &async_channel::Sender<f32>) -> Result<
         .and_then(|value| value.parse::<u64>().ok());
     let mut reader = resp.into_reader();
 
-    let tmp = std::env::temp_dir().join(format!("vterm-update-{}.dmg", std::process::id()));
+    let tmp =
+        std::env::temp_dir().join(format!("vterm-update-{}.{}", std::process::id(), extension));
     let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
     let mut buffer = [0_u8; 64 * 1024];
     let mut downloaded = 0_u64;
@@ -318,6 +418,13 @@ fn relaunch(app: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn asset(name: &str) -> Asset {
+        Asset {
+            name: name.to_string(),
+            browser_download_url: format!("https://example.com/{name}"),
+        }
+    }
+
     #[test]
     fn test_is_newer() {
         assert!(is_newer("0.2.0", "0.1.0"));
@@ -326,6 +433,61 @@ mod tests {
         assert!(!is_newer("0.1.0", "0.2.0"));
         assert!(is_newer("v0.2.0", "0.1.0"));
         assert!(!is_newer("beta", "beta"));
+    }
+
+    #[test]
+    fn selects_platform_asset() {
+        let assets = vec![asset("vterm-macos.dmg"), asset("vterm-windows.zip")];
+        assert_eq!(
+            select_download_url(&assets, "macos").as_deref(),
+            Some("https://example.com/vterm-macos.dmg")
+        );
+        assert_eq!(
+            select_download_url(&assets, "windows").as_deref(),
+            Some("https://example.com/vterm-windows.zip")
+        );
+        assert_eq!(select_download_url(&assets, "linux"), None);
+        // Windows falls back to any zip when the name lacks "windows".
+        let generic = vec![asset("vterm-macos.dmg"), asset("update.zip")];
+        assert_eq!(
+            select_download_url(&generic, "windows").as_deref(),
+            Some("https://example.com/update.zip")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_script_waits_then_swaps() {
+        let script = windows_update_script(
+            Path::new("C:\\Temp\\vterm-update-1-0.5.1.exe"),
+            Path::new("C:\\Users\\me\\AppData\\Local\\Programs\\vterm\\vterm.exe"),
+            1234,
+        );
+        assert!(script.contains("1234"), "waits on our PID");
+        assert!(script.contains("move /Y"), "swaps after exit");
+        assert!(script.contains("vterm-update-1-0.5.1.exe"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extracts_exe_from_zip() {
+        let dir = std::env::temp_dir().join(format!("vterm-zip-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("update.zip");
+        let dest = dir.join("vterm.exe");
+        {
+            let file = std::fs::File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            zip.start_file("vterm.exe", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            use std::io::Write as _;
+            zip.write_all(b"new-exe").unwrap();
+            zip.finish().unwrap();
+        }
+        extract_exe_from_zip(&zip_path, &dest).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new-exe");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(target_os = "macos")]

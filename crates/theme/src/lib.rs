@@ -1,5 +1,8 @@
 use gpui::*;
 
+pub type ThemeFactory = fn() -> Theme;
+pub type ThemeCatalogEntry = (&'static str, ThemeFactory);
+
 #[derive(Clone)]
 pub struct Theme {
     pub bg_main: Rgba,
@@ -52,8 +55,8 @@ impl Theme {
         }
     }
 
-    pub fn builtins() -> [(&'static str, fn() -> Self); 27] {
-        let mut themes: [(&'static str, fn() -> Self); 27] = [
+    pub fn builtins() -> [ThemeCatalogEntry; 27] {
+        let mut themes: [ThemeCatalogEntry; 27] = [
             ("light", Self::light),
             ("midnight", Self::midnight),
             ("ocean", Self::ocean),
@@ -102,20 +105,16 @@ impl Theme {
     }
 
     pub fn is_dark(name: &str) -> bool {
-        !matches!(
-            name,
-            "light"
-                | "paper"
-                | "lavender"
-                | "sand"
-                | "one_light"
-                | "vscode_light_plus"
-                | "vscode_quiet_light"
-                | "solarized_light"
-        )
+        Self::from_name(Some(name)).is_dark_theme()
     }
 
-    #[allow(dead_code)]
+    /// Dark when the main background is perceptually dark. Derived from
+    /// luminance so new themes classify automatically without updating a
+    /// hardcoded name list.
+    pub fn is_dark_theme(&self) -> bool {
+        relative_luminance(self.bg_main) < 0.4
+    }
+
     pub fn light() -> Self {
         Self {
             bg_main: rgb(0xf7f8fa),
@@ -147,6 +146,7 @@ impl Theme {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn from_palette(
         bg_main: u32,
         bg_sidebar: u32,
@@ -167,7 +167,7 @@ impl Theme {
             text_primary: rgb(text_primary),
             text_muted: rgb(text_muted),
             accent: rgb(accent),
-            ansi: ansi.map(|color| rgb(color)),
+            ansi: ansi.map(rgb),
         }
     }
 
@@ -409,7 +409,6 @@ impl Theme {
         )
     }
 
-    #[allow(dead_code)]
     pub fn ubuntu() -> Self {
         Self {
             bg_main: rgb(0x300a24),
@@ -441,7 +440,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn zed_dark() -> Self {
         Self {
             bg_main: rgb(0x1e1e1e),
@@ -473,7 +471,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn dracula() -> Self {
         Self {
             bg_main: rgb(0x282a36),
@@ -505,7 +502,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn nord() -> Self {
         Self {
             bg_main: rgb(0x2e3440),
@@ -537,7 +533,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn gruvbox_dark() -> Self {
         Self {
             bg_main: rgb(0x282828),
@@ -569,7 +564,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn one_dark() -> Self {
         Self {
             bg_main: rgb(0x282c34),
@@ -601,7 +595,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn solarized_dark() -> Self {
         Self {
             bg_main: rgb(0x002b36),
@@ -633,7 +626,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn catppuccin_mocha() -> Self {
         Self {
             bg_main: rgb(0x1e1e2e),
@@ -665,7 +657,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn tokyo_night() -> Self {
         Self {
             bg_main: rgb(0x1a1b26),
@@ -697,7 +688,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn monokai() -> Self {
         Self {
             bg_main: rgb(0x272822),
@@ -729,7 +719,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn ayu_dark() -> Self {
         Self {
             bg_main: rgb(0x0f1419),
@@ -761,7 +750,6 @@ impl Theme {
         }
     }
 
-    #[allow(dead_code)]
     pub fn github_dark() -> Self {
         Self {
             bg_main: rgb(0x0d1117),
@@ -794,6 +782,44 @@ impl Theme {
     }
 }
 
+pub const MIN_BUTTON_CONTRAST: f32 = 3.0;
+
+pub fn relative_luminance(color: Rgba) -> f32 {
+    fn linear(channel: f32) -> f32 {
+        if channel <= 0.03928 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+
+pub fn contrast_ratio(first: Rgba, second: Rgba) -> f32 {
+    let first = relative_luminance(first);
+    let second = relative_luminance(second);
+    (first.max(second) + 0.05) / (first.min(second) + 0.05)
+}
+
+/// Picks a readable foreground for `background`, preferring `preferred` and
+/// falling back to black/white. Shared by buttons and terminal tinting so
+/// contrast logic can't drift between crates.
+pub fn readable_text(background: Rgba, preferred: Rgba) -> Rgba {
+    if contrast_ratio(background, preferred) >= MIN_BUTTON_CONTRAST {
+        return preferred;
+    }
+
+    [rgb(0x000000), rgb(0xffffff)]
+        .into_iter()
+        .max_by(|first, second| {
+            contrast_ratio(background, *first)
+                .partial_cmp(&contrast_ratio(background, *second))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(rgb(0xffffff))
+}
+
 #[cfg(test)]
 mod tests {
     use super::Theme;
@@ -816,5 +842,24 @@ mod tests {
         let mut sorted_names = names.clone();
         sorted_names.sort();
         assert_eq!(names, sorted_names);
+    }
+
+    #[test]
+    fn dark_classification_follows_background_luminance() {
+        for light in [
+            "light",
+            "paper",
+            "lavender",
+            "sand",
+            "one_light",
+            "vscode_light_plus",
+            "vscode_quiet_light",
+            "solarized_light",
+        ] {
+            assert!(!Theme::is_dark(light), "{light} should classify as light");
+        }
+        for dark in ["zed_dark", "midnight", "high_contrast", "ubuntu", "dracula"] {
+            assert!(Theme::is_dark(dark), "{dark} should classify as dark");
+        }
     }
 }

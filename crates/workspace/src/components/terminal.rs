@@ -1,7 +1,7 @@
-use crate::workspace::{Workspace, TERMINAL_FONT};
+use crate::workspace::{TERMINAL_FONT, Workspace};
 use gpui::prelude::*;
 use gpui::*;
-use terminal::{palette_rgb, CellColor, TermCell};
+use terminal::{CellColor, TermCell, palette_rgb};
 
 // Vertical nudge applied to each grid line so glyphs sit centered inside their
 // cell. Overlays (selection, IME, cursor) must add the same offset or they
@@ -38,11 +38,7 @@ impl Palette {
 }
 
 fn u32_to_channels(color: u32) -> [u8; 3] {
-    [
-        (color >> 16) as u8,
-        (color >> 8) as u8,
-        color as u8,
-    ]
+    [(color >> 16) as u8, (color >> 8) as u8, color as u8]
 }
 
 fn cell_color_rgb(color: &CellColor, fallback: [u8; 3], pal: &Palette) -> [u8; 3] {
@@ -197,6 +193,8 @@ fn snap_to_device_pixel(value: f32, scale_factor: f32) -> f32 {
     (value * scale_factor).round() / scale_factor
 }
 
+// 8 args is intentional: one call site passes the full cell geometry.
+#[allow(clippy::too_many_arguments)]
 fn push_box_drawing(
     elements: &mut Vec<gpui::AnyElement>,
     drawing: BoxDrawing,
@@ -540,16 +538,15 @@ pub fn render_terminal_view(
                         };
 
                         let create_el = |start_cell: usize, width_cells: usize| {
-                            let mut base =
-                                div()
-                                    .absolute()
-                                    .left(px(start_cell as f32 * cell_w))
-                                    .whitespace_nowrap()
-                                    .flex_shrink_0()
-                                    .w(px(width_cells as f32 * cell_w))
-                                    .h(px(cell_h))
-                                    .pt(px(CELL_PAD_Y))
-                                    .text_color(final_fg);
+                            let mut base = div()
+                                .absolute()
+                                .left(px(start_cell as f32 * cell_w))
+                                .whitespace_nowrap()
+                                .flex_shrink_0()
+                                .w(px(width_cells as f32 * cell_w))
+                                .h(px(cell_h))
+                                .pt(px(CELL_PAD_Y))
+                                .text_color(final_fg);
                             if bg != CellColor::Background || inv {
                                 base = base.bg(final_bg);
                             }
@@ -564,10 +561,7 @@ pub fn render_terminal_view(
                                 let end = byte_offset + i;
                                 let end_cell = cell_index_at_byte_offset(&run_cells, end);
                                 line_children.push(
-                                    create_el(
-                                        start_col + cell_offset,
-                                        end_cell - cell_offset,
-                                    )
+                                    create_el(start_col + cell_offset, end_cell - cell_offset)
                                         .child(run_text[byte_offset..end].to_string()),
                                 );
                                 byte_offset = end;
@@ -607,10 +601,7 @@ pub fn render_terminal_view(
                             cell_offset = end_cell;
                         } else {
                             line_children.push(
-                                create_el(
-                                    start_col + cell_offset,
-                                    run_cells.len() - cell_offset,
-                                )
+                                create_el(start_col + cell_offset, run_cells.len() - cell_offset)
                                     .child(remaining.to_string()),
                             );
                             break;
@@ -667,11 +658,7 @@ pub fn render_terminal_view(
                         16.0 + CELL_PAD_Y + r as f32 * cell_h,
                         cell_w,
                         cell_h,
-                        color_to_gpui(readable_color(
-                            fill,
-                            u32_to_channels(pal.bg),
-                            &pal,
-                        )),
+                        color_to_gpui(readable_color(fill, u32_to_channels(pal.bg), &pal)),
                         scale_factor,
                     );
                 }
@@ -687,11 +674,7 @@ pub fn render_terminal_view(
                         16.0 + CELL_PAD_Y + r as f32 * cell_h,
                         cell_w,
                         cell_h,
-                        color_to_gpui(readable_color(
-                            fill,
-                            u32_to_channels(pal.bg),
-                            &pal,
-                        )),
+                        color_to_gpui(readable_color(fill, u32_to_channels(pal.bg), &pal)),
                     );
                 }
 

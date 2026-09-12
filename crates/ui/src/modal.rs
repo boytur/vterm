@@ -1,5 +1,5 @@
-use theme::Theme;
 use gpui::*;
+use theme::Theme;
 
 pub fn modal_overlay(
     theme: &Theme,

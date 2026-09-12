@@ -28,9 +28,12 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
     let theme = &workspace.state.theme;
     let drop_target = workspace.tab_drop_target;
     let modal_open = workspace.branch_menu_open || workspace.theme_menu_open;
-    let tab_count = workspace.state.workspaces[workspace.state.active_workspace]
-        .terminals
-        .len();
+    let active_ws = workspace
+        .state
+        .workspaces
+        .get(workspace.state.active_workspace);
+    let tab_count = active_ws.map(|ws| ws.terminals.len()).unwrap_or(0);
+    let active_term = active_ws.map(|ws| ws.active_term).unwrap_or(0);
 
     div()
         .id("tab-bar")
@@ -46,13 +49,12 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
             cx.listener(|_, _, _, cx| cx.stop_propagation()),
         )
         .children(
-            workspace.state.workspaces[workspace.state.active_workspace]
-                .terminals
-                .iter()
-                .enumerate()
+            active_ws
+                .map(|ws| ws.terminals.iter().enumerate())
+                .into_iter()
+                .flatten()
                 .map(|(i, term)| {
-                    let is_active = i
-                        == workspace.state.workspaces[workspace.state.active_workspace].active_term;
+                    let is_active = i == active_term;
                     let text_col = if is_active {
                         theme.text_primary
                     } else {
@@ -156,13 +158,14 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                         .flex()
                                         .justify_center()
                                         .items_center()
-                                .rounded_full()
-                                .text_color(theme.text_muted)
-                                .when(!modal_open, |el| {
-                                    el.hover(|s| {
-                                        s.bg(theme.bg_tab_inactive).text_color(theme.ansi[1])
-                                    })
-                                })
+                                        .rounded_full()
+                                        .text_color(theme.text_muted)
+                                        .when(!modal_open, |el| {
+                                            el.hover(|s| {
+                                                s.bg(theme.bg_tab_inactive)
+                                                    .text_color(theme.ansi[1])
+                                            })
+                                        })
                                         .on_click(cx.listener(
                                             move |this, _event: &gpui::ClickEvent, _window, cx| {
                                                 this.delete_term(i, cx);
@@ -229,7 +232,7 @@ pub fn render_tab_bar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                 }))
                 .child("+")
         })
-    }
+}
 
 fn drop_indicator(theme: &Theme) -> impl IntoElement {
     div()

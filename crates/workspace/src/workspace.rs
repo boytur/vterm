@@ -4,6 +4,7 @@ use crate::components::tab_bar::render_tab_bar;
 use crate::components::terminal::render_terminal_view;
 use crate::components::title_bar::render_title_bar;
 use crate::state::AppState;
+use crate::{git_command, process_cwd, remove_staged_path};
 use gpui::prelude::*;
 use gpui::*;
 use std::ops::Range;
@@ -27,51 +28,6 @@ const SIDEBAR_WIDTH: f32 = 256.0;
 const TITLE_BAR_HEIGHT: f32 = 32.0;
 const TAB_BAR_HEIGHT: f32 = 32.0;
 const PANE_PAD: f32 = 16.0;
-
-fn process_cwd(#[allow(unused_variables)] pid: u32) -> Option<String> {
-    #[cfg(unix)]
-    {
-        let child_pids = std::process::Command::new("pgrep")
-            .args(["-P", &pid.to_string()])
-            .output()
-            .ok()
-            .map(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .filter_map(|line| line.trim().parse::<u32>().ok())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        for child_pid in child_pids {
-            if let Some(cwd) = process_cwd(child_pid) {
-                return Some(cwd);
-            }
-        }
-
-        let output = std::process::Command::new("lsof")
-            .args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-F", "n"])
-            .output()
-            .ok()?;
-
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .find_map(|line| line.strip_prefix('n').map(str::to_string))
-    }
-
-    #[cfg(windows)]
-    {
-        None // Dynamic CWD tracking requires NtQueryInformationProcess
-    }
-}
-
-fn git_command(cwd: &str) -> std::process::Command {
-    let mut cmd = std::process::Command::new("git");
-    cmd.current_dir(cwd);
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x08000000); // CREATE_NO_WINDOW
-    cmd
-}
 
 pub struct Workspace {
     pub state: AppState,
@@ -202,10 +158,7 @@ impl Workspace {
         Self::terminal_cell_width_from_text_system(cx.text_system(), font_size)
     }
 
-    fn terminal_cell_width_from_text_system(
-        text_system: &gpui::TextSystem,
-        font_size: f32,
-    ) -> f32 {
+    fn terminal_cell_width_from_text_system(text_system: &gpui::TextSystem, font_size: f32) -> f32 {
         let font_id = text_system.resolve_font(&font(TERMINAL_FONT));
         text_system
             .ch_advance(font_id, px(font_size))
@@ -231,8 +184,8 @@ impl Workspace {
         cell_w: f32,
     ) -> (u16, u16) {
         let cell_h = font_size * (20.0 / 14.0);
-        let cols = ((f32::from(viewport.width) - SIDEBAR_WIDTH - PANE_PAD * 2.0) / cell_w)
-            .max(10.0) as u16;
+        let cols = ((f32::from(viewport.width) - SIDEBAR_WIDTH - PANE_PAD * 2.0) / cell_w).max(10.0)
+            as u16;
         let rows =
             ((f32::from(viewport.height) - TITLE_BAR_HEIGHT - TAB_BAR_HEIGHT - PANE_PAD * 2.0)
                 / cell_h)
@@ -350,10 +303,9 @@ impl Workspace {
                                         .update_info
                                         .as_ref()
                                         .is_some_and(|current| current.version != info.version)
+                                        && let Some(staged) = this.update_staged.take()
                                     {
-                                        if let Some(staged) = this.update_staged.take() {
-                                            let _ = std::fs::remove_dir_all(staged);
-                                        }
+                                        remove_staged_path(&staged);
                                     }
                                     this.update_info = Some(info.clone());
                                     this.update_error = None;
@@ -552,7 +504,10 @@ impl Workspace {
                 self.alert_modal = Some(("Git Checkout Failed".to_string(), stderr.to_string()));
             }
 
-            if let Ok(output) = git_command(&cwd).args(["branch", "--show-current"]).output() {
+            if let Ok(output) = git_command(&cwd)
+                .args(["branch", "--show-current"])
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 self.git_branch = stdout.trim().to_string();
             }
@@ -582,11 +537,8 @@ impl Workspace {
         let name = "Workspace".to_string();
 
         let cwd = self.get_active_terminal_cwd(cx);
-        let (rows, cols) = Self::terminal_size_for_window(
-            window.viewport_size(),
-            self.state.font_size,
-            window,
-        );
+        let (rows, cols) =
+            Self::terminal_size_for_window(window.viewport_size(), self.state.font_size, window);
         let colors = self.terminal_colors.clone();
         let term =
             cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
@@ -866,16 +818,17 @@ impl Workspace {
 
             match key.as_str() {
                 "enter" => {
-                    if let Some((idx, field)) = self.renaming_tab_modal.take() {
-                        if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
-                            ws.terminals[idx].name = field.value().to_string();
-                            self.state.save().ok();
-                        }
-                    } else if let Some((idx, field)) = self.renaming_dir_modal.take() {
-                        if let Some(ws) = self.state.workspaces.get_mut(idx) {
-                            ws.name = field.value().to_string();
-                            self.state.save().ok();
-                        }
+                    if let Some((idx, field)) = self.renaming_tab_modal.take()
+                        && let Some(ws) = self.state.workspaces.get_mut(ws_idx)
+                        && let Some(term) = ws.terminals.get_mut(idx)
+                    {
+                        term.name = field.value().to_string();
+                        self.state.save().ok();
+                    } else if let Some((idx, field)) = self.renaming_dir_modal.take()
+                        && let Some(ws) = self.state.workspaces.get_mut(idx)
+                    {
+                        ws.name = field.value().to_string();
+                        self.state.save().ok();
                     }
                 }
                 "escape" => {
@@ -1147,11 +1100,8 @@ impl Workspace {
         let cwd = self.get_active_terminal_cwd(cx);
         let name = "Terminal".to_string();
 
-        let (rows, cols) = Self::terminal_size_for_window(
-            window.viewport_size(),
-            self.state.font_size,
-            window,
-        );
+        let (rows, cols) =
+            Self::terminal_size_for_window(window.viewport_size(), self.state.font_size, window);
         let colors = self.terminal_colors.clone();
         let term =
             cx.new(|cx| PtyTerminal::new_with_cwd(cwd.clone(), None, rows, cols, colors, cx));
@@ -1314,20 +1264,6 @@ impl EntityInputHandler for Workspace {
     }
 }
 
-#[cfg(test)]
-mod input_tests {
-    use super::utf16_to_byte_offset;
-
-    #[test]
-    fn utf16_offsets_handle_multibyte_and_surrogate_characters() {
-        let text = "Aส🙂";
-        assert_eq!(utf16_to_byte_offset(text, 0), 0);
-        assert_eq!(utf16_to_byte_offset(text, 1), 1);
-        assert_eq!(utf16_to_byte_offset(text, 2), 4);
-        assert_eq!(utf16_to_byte_offset(text, 4), 8);
-        assert_eq!(utf16_to_byte_offset(text, 9), 8);
-    }
-}
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = &self.state.theme;
@@ -1829,5 +1765,20 @@ impl Render for Workspace {
         }
 
         root
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::utf16_to_byte_offset;
+
+    #[test]
+    fn utf16_offsets_handle_multibyte_and_surrogate_characters() {
+        let text = "Aส🙂";
+        assert_eq!(utf16_to_byte_offset(text, 0), 0);
+        assert_eq!(utf16_to_byte_offset(text, 1), 1);
+        assert_eq!(utf16_to_byte_offset(text, 2), 4);
+        assert_eq!(utf16_to_byte_offset(text, 4), 8);
+        assert_eq!(utf16_to_byte_offset(text, 9), 8);
     }
 }
