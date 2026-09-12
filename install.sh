@@ -139,42 +139,54 @@ elif [[ "$IS_WINDOWS" == "true" ]]; then
   TARGET_EXE="$INSTALL_DIR/${APP_NAME}.exe"
   BACKUP_EXE="$INSTALL_DIR/${APP_NAME}.exe.old"
 
-  # Swap executable in case vterm is currently running
+  # Handle existing executable / running process
   if [[ -f "$TARGET_EXE" ]]; then
-    mv -f "$TARGET_EXE" "$BACKUP_EXE" 2>/dev/null || true
+    if ! mv -f "$TARGET_EXE" "$BACKUP_EXE" 2>/dev/null; then
+      echo "Error: Could not replace ${TARGET_EXE}. vterm may be currently running." >&2
+      echo "Please close any running vterm instances and try again." >&2
+      exit 1
+    fi
   fi
 
-  cp -f "$SOURCE_EXE" "$TARGET_EXE"
+  if ! cp -f "$SOURCE_EXE" "$TARGET_EXE"; then
+    echo "Error: Failed to install ${TARGET_EXE}." >&2
+    [[ -f "$BACKUP_EXE" ]] && mv -f "$BACKUP_EXE" "$TARGET_EXE" 2>/dev/null || true
+    exit 1
+  fi
+
   chmod +x "$TARGET_EXE" 2>/dev/null || true
   rm -f "$BACKUP_EXE" 2>/dev/null || true
 
   # Clear Windows Mark of the Web quarantine, add to User PATH, and create Start Menu shortcut
   if command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-      \$dir = '$WIN_INSTALL_DIR'
-      \$exe = Join-Path \$dir '${APP_NAME}.exe'
-      if (Test-Path \$exe) {
-        Unblock-File -Path \$exe -ErrorAction SilentlyContinue
+    VTERM_WIN_DIR="$WIN_INSTALL_DIR" VTERM_APP="$APP_NAME" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
+      $dir = $env:VTERM_WIN_DIR
+      $appName = $env:VTERM_APP
+      $exe = Join-Path $dir "$appName.exe"
+      if (Test-Path $exe) {
+        Unblock-File -Path $exe -ErrorAction SilentlyContinue
       }
 
-      \$p = [Environment]::GetEnvironmentVariable('Path', 'User')
-      if ((\$p -split ';') -notcontains \$dir) {
-        [Environment]::SetEnvironmentVariable('Path', (\$p.TrimEnd(';') + ';' + \$dir), 'User')
+      $p = [Environment]::GetEnvironmentVariable("Path", "User")
+      if (($p -split ";") -notcontains $dir) {
+        $newPath = if ($p) { $p.TrimEnd(";") + ";" + $dir } else { $dir }
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
       }
 
-      \$ws = New-Object -ComObject WScript.Shell
-      \$startMenu = [Environment]::GetFolderPath('StartMenu')
-      \$shortcutDir = Join-Path \$startMenu 'Programs'
-      if (Test-Path \$shortcutDir) {
-        \$shortcut = \$ws.CreateShortcut((Join-Path \$shortcutDir '${APP_NAME}.lnk'))
-        \$shortcut.TargetPath = \$exe
-        \$shortcut.IconLocation = \$exe + ',0'
-        \$shortcut.WorkingDirectory = [Environment]::GetFolderPath('UserProfile')
-        \$shortcut.Description = 'vterm terminal emulator'
-        \$shortcut.Save()
+      $ws = New-Object -ComObject WScript.Shell
+      $startMenu = [Environment]::GetFolderPath("StartMenu")
+      $shortcutDir = Join-Path $startMenu "Programs"
+      if (Test-Path $shortcutDir) {
+        $shortcut = $ws.CreateShortcut((Join-Path $shortcutDir "$appName.lnk"))
+        $shortcut.TargetPath = $exe
+        $shortcut.IconLocation = "$exe,0"
+        $shortcut.WorkingDirectory = [Environment]::GetFolderPath("UserProfile")
+        $shortcut.Description = "vterm terminal emulator"
+        $shortcut.Save()
       }
-    " >/dev/null 2>&1 || true
+    ' || echo "Warning: Could not configure PATH or Start Menu shortcut automatically." >&2
   fi
+
 
 
   echo "Done. Installed ${APP_NAME} to: ${WIN_INSTALL_DIR}\\${APP_NAME}.exe"

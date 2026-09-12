@@ -96,8 +96,9 @@
             "name": "How do I install vterm?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "On macOS and Windows, run curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash, or download the latest release asset from GitHub Releases."
+              "text": "On macOS or Linux/WSL/Git Bash, run curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash. On Windows PowerShell, run irm https://raw.githubusercontent.com/boytur/vterm/master/install.ps1 | iex. You can also download release binaries directly from GitHub Releases."
             }
+
 
           },
           {
@@ -275,7 +276,7 @@
         <div class="section-intro">
           <p class="eyebrow">Start here</p>
           <h2 id="install-title">Install in one line.</h2>
-          <p>Run the command on macOS or Windows. It installs vterm directly and configures everything for your system.</p>
+          <p>Run the curl command in macOS / Linux terminal or Git Bash. On Windows PowerShell, run <code>irm https://raw.githubusercontent.com/boytur/vterm/master/install.ps1 | iex</code>.</p>
         </div>
         <div class="install-panel">
           <div class="snippet-label"><span>Terminal</span><span>copy and run</span></div>
@@ -283,7 +284,7 @@
             <code id="install-command">curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash</code>
             <button class="copy-button" type="button" data-copy-target="install-command" aria-label="Copy install command">Copy</button>
           </div>
-          <p class="install-note">Supported on macOS and Windows. Free and open source.</p>
+          <p class="install-note">Supported on macOS and Windows (PowerShell, Git Bash, WSL). Free and open source.</p>
           <details class="manual-install">
             <summary>Prefer manual download?</summary>
             <div>
@@ -306,12 +307,13 @@
         <h2 id="faq-title">Frequently asked questions.</h2>
       </div>
       <div class="faq-list">
-        <details open><summary>What is vterm?</summary><p>vterm is a free, open-source terminal emulator for macOS. It is written in Rust and uses GPUI for native GPU-accelerated rendering.</p></details>
+        <details open><summary>What is vterm?</summary><p>vterm is a free, open-source terminal emulator for macOS and Windows. It is written in Rust and uses GPUI for native GPU-accelerated rendering.</p></details>
         <details><summary>What does vterm support?</summary><p>vterm supports truecolor and 256-color output, workspaces, tabs with drag-and-drop reordering, git branch context, 27 built-in themes, persistent terminal state, and in-app updates.</p></details>
         <details><summary>How do I reorder tabs?</summary><p>Drag a tab left or right along the tab bar. An accent-colored line shows where it will be inserted; release to drop it there. Dropping it on the + button moves the tab to the end of the bar.</p></details>
-        <details><summary>How do I install vterm?</summary><p>Run the curl command above on macOS, or download the latest DMG from GitHub Releases and move the app to Applications.</p></details>
+        <details><summary>How do I install vterm?</summary><p>On macOS or Git Bash/WSL, run the curl command above. On Windows PowerShell, run <code>irm https://raw.githubusercontent.com/boytur/vterm/master/install.ps1 | iex</code>. Alternatively, download the macOS DMG or Windows ZIP directly from GitHub Releases.</p></details>
         <details><summary>Is vterm free and open source?</summary><p>Yes. vterm is published under the MIT license and the source code is available on GitHub.</p></details>
       </div>
+
     </section>
   </main>
 

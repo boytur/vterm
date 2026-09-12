@@ -3,8 +3,10 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
-- Add Windows support to the curl install script (install.sh).
+- Add Windows support to the curl install script (install.sh) and add native install.ps1 for PowerShell.
+- Embed application icon and version metadata into Windows vterm.exe binary.
 - Build and package Windows release zip in the CD workflow.
+
 
 ## [0.5.0] - 2026-08-30
 

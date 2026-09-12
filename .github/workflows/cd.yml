@@ -20,7 +20,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Verify release version
         if: startsWith(github.ref, 'refs/tags/')
@@ -34,10 +34,11 @@ jobs:
           }
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@a54c7fe9363c9033d274415a478d809a93464b36 # stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+
         with:
           path: |
             ~/.cargo/registry
@@ -108,7 +109,7 @@ jobs:
           test -s release-notes.md
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: vterm-macos
           path: vterm-macos.dmg
@@ -116,7 +117,7 @@ jobs:
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c062e49339e55729be6ef16e537482f6f4c0840b # v2.2.1
         with:
           files: vterm-macos.dmg
           body_path: release-notes.md
@@ -126,7 +127,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Verify release version
         if: startsWith(github.ref, 'refs/tags/')
@@ -141,10 +142,10 @@ jobs:
           }
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@a54c7fe9363c9033d274415a478d809a93464b36 # stable
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: |
             ~/.cargo/registry
@@ -172,7 +173,7 @@ jobs:
           test -s release-notes.md
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: vterm-windows
           path: vterm-windows.zip
@@ -180,8 +181,9 @@ jobs:
 
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c062e49339e55729be6ef16e537482f6f4c0840b # v2.2.1
         with:
           files: vterm-windows.zip
           body_path: release-notes.md
+
 

@@ -14,16 +14,21 @@ A high-performance, GPU-accelerated terminal emulator written in Rust using the 
 
 ## Install
 
-### macOS & Windows (via curl)
-
-Installs the latest release directly without security quarantine issues:
+### macOS / Linux / WSL / Git Bash
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/boytur/vterm/master/install.sh | bash
 ```
 
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/boytur/vterm/master/install.ps1 | iex
+```
+
 - **macOS**: Installs `vterm.app` to `/Applications` and clears Gatekeeper quarantine.
-- **Windows**: Installs `vterm.exe` to `%LOCALAPPDATA%\Programs\vterm`, adds it to User PATH, and creates a Start Menu shortcut.
+- **Windows**: Installs `vterm.exe` to `%LOCALAPPDATA%\Programs\vterm`, clears Mark of the Web quarantine, adds to User PATH, and creates a Start Menu shortcut.
+
 
 ### Manual Download
 

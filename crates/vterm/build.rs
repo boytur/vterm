@@ -1,4 +1,5 @@
-﻿fn main() {
+﻿/// Compiles Windows resource files (icon and version info) into the executable on Windows.
+fn main() {
     #[cfg(windows)]
     let _ = embed_resource::compile("vterm.rc", embed_resource::NONE);
 }
