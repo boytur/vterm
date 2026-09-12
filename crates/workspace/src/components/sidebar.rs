@@ -110,13 +110,12 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                         }
                                         // Vertical list: drop above when in the top
                                         // half, below when in the bottom half.
-                                        let insert = if event.event.position.y
-                                            < event.bounds.center().y
-                                        {
-                                            i
-                                        } else {
-                                            i + 1
-                                        };
+                                        let insert =
+                                            if event.event.position.y < event.bounds.center().y {
+                                                i
+                                            } else {
+                                                i + 1
+                                            };
                                         if this.dir_drop_target != Some(insert) {
                                             this.dir_drop_target = Some(insert);
                                             cx.notify();
@@ -142,13 +141,7 @@ pub fn render_sidebar(workspace: &Workspace, cx: &mut Context<Workspace>) -> imp
                                 .on_click(cx.listener(move |this, _event, _window, cx| {
                                     this.select_dir(i, cx);
                                 }))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .child(ws.name.clone()),
-                                )
+                                .child(div().flex_1().min_w_0().truncate().child(ws.name.clone()))
                                 .child(
                                     div()
                                         .id(("del-dir", i))

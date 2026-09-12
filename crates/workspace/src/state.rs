@@ -37,6 +37,12 @@ fn default_font_size() -> f32 {
     DEFAULT_FONT_SIZE
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     // Keep naming independent from the process CWD (dev.sh, Finder, and a
     // release app can all start in different directories).

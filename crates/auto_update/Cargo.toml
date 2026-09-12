@@ -9,3 +9,4 @@ async-channel.workspace = true
 semver.workspace = true
 serde.workspace = true
 ureq.workspace = true
+zip.workspace = true

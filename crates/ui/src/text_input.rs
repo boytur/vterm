@@ -101,49 +101,10 @@ impl TextField {
     /// Handles one keystroke; returns true when the field consumed it.
     /// `enter`/`escape` are left to the caller for confirm/cancel semantics.
     pub fn key(&mut self, key: &str, modifiers: &Modifiers, cx: &App) -> bool {
+        if let Some(consumed) = self.apply_simple_key(key, modifiers) {
+            return consumed;
+        }
         match key {
-            "enter" | "escape" => false,
-            "backspace" => {
-                if !self.remove_selection() && self.caret > 0 {
-                    let start = self.prev_boundary(self.caret);
-                    self.value.replace_range(start..self.caret, "");
-                    self.caret = start;
-                }
-                true
-            }
-            "delete" => {
-                if !self.remove_selection() && self.caret < self.value.len() {
-                    let end = self.next_boundary(self.caret);
-                    self.value.replace_range(self.caret..end, "");
-                }
-                true
-            }
-            "left" => {
-                self.move_caret(-1, modifiers.shift);
-                true
-            }
-            "right" => {
-                self.move_caret(1, modifiers.shift);
-                true
-            }
-            "home" => {
-                if !modifiers.shift {
-                    self.anchor = None;
-                }
-                self.caret = 0;
-                true
-            }
-            "end" => {
-                if !modifiers.shift {
-                    self.anchor = None;
-                }
-                self.caret = self.value.len();
-                true
-            }
-            "a" if modifiers.platform => {
-                self.select_all();
-                true
-            }
             "c" | "x" if modifiers.platform => {
                 let (start, end) = match self.selection() {
                     Some((s, e)) => (s, e),
@@ -165,21 +126,74 @@ impl TextField {
                 }
                 true
             }
+            _ => false,
+        }
+    }
+
+    /// Handles keys that don't need clipboard access. Returns `Some` when
+    /// the key is fully handled here, `None` for clipboard keys that need
+    /// `App`. Split out so unit tests can cover editing without a GPUI `App`.
+    fn apply_simple_key(&mut self, key: &str, modifiers: &Modifiers) -> Option<bool> {
+        match key {
+            "enter" | "escape" => Some(false),
+            "backspace" => {
+                if !self.remove_selection() && self.caret > 0 {
+                    let start = self.prev_boundary(self.caret);
+                    self.value.replace_range(start..self.caret, "");
+                    self.caret = start;
+                }
+                Some(true)
+            }
+            "delete" => {
+                if !self.remove_selection() && self.caret < self.value.len() {
+                    let end = self.next_boundary(self.caret);
+                    self.value.replace_range(self.caret..end, "");
+                }
+                Some(true)
+            }
+            "left" => {
+                self.move_caret(-1, modifiers.shift);
+                Some(true)
+            }
+            "right" => {
+                self.move_caret(1, modifiers.shift);
+                Some(true)
+            }
+            "home" => {
+                if !modifiers.shift {
+                    self.anchor = None;
+                }
+                self.caret = 0;
+                Some(true)
+            }
+            "end" => {
+                if !modifiers.shift {
+                    self.anchor = None;
+                }
+                self.caret = self.value.len();
+                Some(true)
+            }
+            "a" if modifiers.platform => {
+                self.select_all();
+                Some(true)
+            }
             "space" => {
                 self.insert(" ");
-                true
+                Some(true)
             }
             typed if typed.chars().count() == 1 => {
-                let c = typed.chars().next().unwrap();
-                let text = if modifiers.shift {
-                    c.to_ascii_uppercase().to_string()
-                } else {
-                    c.to_string()
-                };
-                self.insert(&text);
-                true
+                // GPUI already applies Shift to `key` ("a"+Shift arrives as
+                // "A", "1"+Shift as "!"). Uppercasing again would corrupt
+                // symbols and non-ASCII input, so insert verbatim. Ignore
+                // shortcut combos (Cmd/Ctrl/Alt) here; they are handled above
+                // or by the caller.
+                if modifiers.platform || modifiers.control || modifiers.alt {
+                    return Some(false);
+                }
+                self.insert(typed);
+                Some(true)
             }
-            _ => false,
+            _ => None,
         }
     }
 
@@ -239,4 +253,62 @@ impl TextField {
 
 fn text_span(text: &str) -> Div {
     div().whitespace_nowrap().child(text.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TextField;
+    use gpui::Modifiers;
+
+    fn no_mods() -> Modifiers {
+        Modifiers {
+            platform: false,
+            shift: false,
+            control: false,
+            alt: false,
+            function: false,
+        }
+    }
+
+    fn shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            ..no_mods()
+        }
+    }
+
+    #[test]
+    fn inserts_shifted_keys_verbatim() {
+        let mut field = TextField::new("");
+        // GPUI delivers the shifted glyph already ("A", "!"); the field must
+        // not uppercase again or "!" would degrade to "1".
+        assert_eq!(field.apply_simple_key("A", &shift()), Some(true));
+        assert_eq!(field.apply_simple_key("!", &shift()), Some(true));
+        assert_eq!(field.value(), "A!");
+    }
+
+    #[test]
+    fn ignores_shortcut_combos_without_clipboard() {
+        let mut field = TextField::new("hi");
+        let mods = Modifiers {
+            platform: true,
+            ..no_mods()
+        };
+        // Cmd+C with no selection, Cmd+X etc. are clipboard paths; the simple
+        // path must not insert text for Ctrl/Alt combos.
+        let ctrl = Modifiers {
+            control: true,
+            ..no_mods()
+        };
+        assert_eq!(field.apply_simple_key("c", &ctrl), Some(false));
+        assert_eq!(field.value(), "hi");
+        assert_eq!(field.apply_simple_key("a", &mods), Some(true));
+    }
+
+    #[test]
+    fn backspace_removes_combining_codepoint() {
+        let mut field = TextField::new("สวัสดี");
+        assert_eq!(field.apply_simple_key("backspace", &no_mods()), Some(true));
+        assert_eq!(field.value(), "สวัสด");
+    }
 }

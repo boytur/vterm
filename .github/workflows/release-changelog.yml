@@ -2,8 +2,9 @@ name: Prepare Release Changelog
 
 on:
   workflow_run:
-    workflows: ["CD - Build Prod (macOS)"]
+    workflows: ["CD - Build Prod"]
     types: [completed]
+
 
 permissions:
   contents: write

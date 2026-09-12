@@ -7,3 +7,7 @@ publish.workspace = true
 [dependencies]
 gpui.workspace = true
 workspace.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0"
+

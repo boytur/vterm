@@ -8,8 +8,8 @@ use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermMode};
-use alacritty_terminal::vte::ansi::{ClearMode, Handler, NamedColor, Processor, StdSyncHandler};
 use alacritty_terminal::vte::ansi::Color as AnsiColor;
+use alacritty_terminal::vte::ansi::{ClearMode, Handler, NamedColor, Processor, StdSyncHandler};
 use async_channel::{Receiver, Sender};
 use gpui::{Context, WeakEntity};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -134,8 +134,16 @@ impl TerminalColors {
     pub fn dark() -> Self {
         let ansi = STANDARD_ANSI.map(|hex| [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]);
         Self::new(
-            [(TERMINAL_FG >> 16) as u8, (TERMINAL_FG >> 8) as u8, TERMINAL_FG as u8],
-            [(TERMINAL_BG >> 16) as u8, (TERMINAL_BG >> 8) as u8, TERMINAL_BG as u8],
+            [
+                (TERMINAL_FG >> 16) as u8,
+                (TERMINAL_FG >> 8) as u8,
+                TERMINAL_FG as u8,
+            ],
+            [
+                (TERMINAL_BG >> 16) as u8,
+                (TERMINAL_BG >> 8) as u8,
+                TERMINAL_BG as u8,
+            ],
             ansi,
         )
     }
@@ -213,7 +221,8 @@ pub struct TerminalSnapshot {
 
 impl TerminalSnapshot {
     pub fn cell(&self, row: u16, col: u16) -> Option<&TermCell> {
-        self.cells.get(row as usize * self.cols as usize + col as usize)
+        self.cells
+            .get(row as usize * self.cols as usize + col as usize)
     }
 }
 
@@ -248,7 +257,9 @@ fn map_color(color: AnsiColor) -> CellColor {
 
 /// Builds a standalone emulator with our scrollback config, shared by real
 /// terminals, dead terminals, and tests.
-fn make_term(rows: u16, cols: u16) -> (Arc<FairMutex<Term<EventProxy>>>, Arc<Mutex<Vec<Event>>>) {
+type TermPair = (Arc<FairMutex<Term<EventProxy>>>, Arc<Mutex<Vec<Event>>>);
+
+fn make_term(rows: u16, cols: u16) -> TermPair {
     let proxy = EventProxy::default();
     let events = proxy.0.clone();
     let bounds = TermBounds { rows, cols };
@@ -300,8 +311,9 @@ impl PtyTerminal {
         }) {
             Ok(pair) => pair,
             Err(e) => {
-                eprintln!("vterm: failed to open pty: {e}");
-                return dead_terminal(None, colors.clone());
+                let msg = format!("vterm: failed to open pty: {e}");
+                eprintln!("{msg}");
+                return dead_terminal_with_message(None, colors.clone(), &msg);
             }
         };
 
@@ -388,23 +400,26 @@ impl PtyTerminal {
         let child = match pair.slave.spawn_command(cmd) {
             Ok(child) => child,
             Err(e) => {
-                eprintln!("vterm: failed to spawn shell: {e}");
-                return dead_terminal(session_name, colors.clone());
+                let msg = format!("vterm: failed to spawn shell '{}': {e}", shell);
+                eprintln!("{msg}");
+                return dead_terminal_with_message(session_name, colors.clone(), &msg);
             }
         };
 
         let mut reader = match pair.master.try_clone_reader() {
             Ok(reader) => reader,
             Err(e) => {
-                eprintln!("vterm: failed to take reader: {e}");
-                return dead_terminal(session_name, colors.clone());
+                let msg = format!("vterm: failed to take pty reader: {e}");
+                eprintln!("{msg}");
+                return dead_terminal_with_message(session_name, colors.clone(), &msg);
             }
         };
         let writer = match pair.master.take_writer() {
             Ok(writer) => writer,
             Err(e) => {
-                eprintln!("vterm: failed to take writer: {e}");
-                return dead_terminal(session_name, colors.clone());
+                let msg = format!("vterm: failed to take pty writer: {e}");
+                eprintln!("{msg}");
+                return dead_terminal_with_message(session_name, colors.clone(), &msg);
             }
         };
 
@@ -433,11 +448,15 @@ impl PtyTerminal {
                 while let Ok(bytes) = rx.recv().await {
                     // Coalesce the whole queued burst into one parse pass so
                     // heavy output costs a single lock + repaint instead of
-                    // one per 8KB chunk. Keeps typing/scrolling smooth while
-                    // commands stream data.
+                    // one per 8KB chunk. Caps per-frame bytes so a runaway
+                    // `cat` can't OOM the UI; leftovers paint next frame.
+                    const MAX_BATCH_BYTES: usize = 256 * 1024;
                     let mut batch = bytes;
-                    while let Ok(next) = rx.try_recv() {
-                        batch.extend_from_slice(&next);
+                    while batch.len() < MAX_BATCH_BYTES {
+                        match rx.try_recv() {
+                            Ok(next) => batch.extend_from_slice(&next),
+                            Err(_) => break,
+                        }
                     }
                     {
                         let mut guard = term_clone.lock();
@@ -502,11 +521,7 @@ impl PtyTerminal {
     }
 
     pub fn write_text(&mut self, text: &str) {
-        let bracketed_paste = self
-            .term
-            .lock()
-            .mode()
-            .contains(TermMode::BRACKETED_PASTE);
+        let bracketed_paste = self.term.lock().mode().contains(TermMode::BRACKETED_PASTE);
         self.write(&encode_text_input(text, bracketed_paste));
     }
 
@@ -597,11 +612,7 @@ impl PtyTerminal {
 
     /// The text in a viewport-relative cell range (inclusive), one string
     /// per row — used for copy-to-clipboard.
-    pub fn text_in_range(
-        &self,
-        (c1, r1): (u16, u16),
-        (c2, r2): (u16, u16),
-    ) -> String {
+    pub fn text_in_range(&self, (c1, r1): (u16, u16), (c2, r2): (u16, u16)) -> String {
         let snapshot = self.snapshot();
         let min_c = c1.min(c2);
         let max_c = c1.max(c2);
@@ -609,8 +620,8 @@ impl PtyTerminal {
         for r in r1.min(r2)..=r1.max(r2) {
             let mut line = String::new();
             for c in min_c..=max_c {
-                line.push_str(&
-                    snapshot
+                line.push_str(
+                    &snapshot
                         .cell(r, c)
                         .filter(|cell| !cell.wide_spacer)
                         .map(|cell| {
@@ -697,9 +708,27 @@ fn detect_shell() -> String {
     }
     #[cfg(windows)]
     {
-        // Prefer PowerShell if available, fall back to cmd.exe.
+        // Prefer modern PowerShell (pwsh) then Windows PowerShell, falling
+        // back to COMSPEC/cmd.exe. `where`-style PATH probing avoids
+        // spawning a shell just to detect one.
+        if find_on_path("pwsh.exe") {
+            return "pwsh.exe".to_string();
+        }
+        if find_on_path("powershell.exe") {
+            return "powershell.exe".to_string();
+        }
         std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
     }
+}
+
+#[cfg(windows)]
+fn find_on_path(exe: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| {
+            let candidate = dir.join(exe);
+            candidate.is_file()
+        })
+    })
 }
 
 fn prepare_zsh_integration() -> Option<(PathBuf, String)> {
@@ -744,7 +773,7 @@ fn prepare_zsh_integration() -> Option<(PathBuf, String)> {
 }
 
 fn encode_text_input(text: &str, bracketed_paste: bool) -> Vec<u8> {
-    if bracketed_paste && text.chars().any(|character| !character.is_ascii()) {
+    if bracketed_paste && !text.is_ascii() {
         let mut bytes = Vec::with_capacity(text.len() + 12);
         bytes.extend_from_slice(b"\x1b[200~");
         bytes.extend_from_slice(text.as_bytes());
@@ -755,8 +784,22 @@ fn encode_text_input(text: &str, bracketed_paste: bool) -> Vec<u8> {
     }
 }
 
-fn dead_terminal(session_name: Option<String>, colors: TerminalColors) -> PtyTerminal {
+/// Dead terminal that also paints `message` into its grid so GUI users see
+/// *why* the pane is empty (stderr from `cargo run` is invisible in Finder /
+/// Start-Menu launches).
+fn dead_terminal_with_message(
+    session_name: Option<String>,
+    colors: TerminalColors,
+    message: &str,
+) -> PtyTerminal {
     let (term, events) = make_term(24, 80);
+    {
+        let mut processor = Processor::<StdSyncHandler>::new();
+        let mut guard = term.lock();
+        let mut text = message.to_string();
+        text.push_str("\r\n");
+        processor.advance(&mut *guard, text.as_bytes());
+    }
     PtyTerminal {
         term,
         events,
@@ -850,17 +893,18 @@ fn scan_csi(data: &[u8]) -> Result<CsiScan, bool> {
         && params
             .iter()
             .any(|p| matches!(*p, b"47" | b"1047" | b"1049"));
-    let clear_scrollback =
-        final_byte == b'J' && params.iter().any(|p| matches!(*p, b"3"));
+    let clear_scrollback = final_byte == b'J' && params.iter().any(|p| matches!(*p, b"3"));
     // `CSI H` / `CSI 1;1H` — cursor home, first half of the classic clear.
     let cup_home = final_byte == b'H' && {
         let non_empty: Vec<_> = params.iter().filter(|p| !p.is_empty()).collect();
-        non_empty.is_empty() || non_empty == [&&b"1"[..]] || non_empty == [&&b"1"[..], &&b"1"[..]]
-            || non_empty == [&&b""[..], &&b"1"[..]] || non_empty == [&&b"1"[..], &&b""[..]]
+        non_empty.is_empty()
+            || non_empty == [&&b"1"[..]]
+            || non_empty == [&&b"1"[..], &&b"1"[..]]
+            || non_empty == [&&b""[..], &&b"1"[..]]
+            || non_empty == [&&b"1"[..], &&b""[..]]
     };
     // `CSI 2J` — erase everything, second half of the classic clear.
-    let erase_all = final_byte == b'J'
-        && params.iter().all(|p| p.is_empty() || *p == b"2");
+    let erase_all = final_byte == b'J' && params.iter().all(|p| p.is_empty() || *p == b"2");
     Ok(CsiScan {
         keep: !alt_switch,
         clear_scrollback,
@@ -906,8 +950,7 @@ impl AltScreenFilter {
                         i += scan.len;
                         continue;
                     }
-                    let purge =
-                        scan.clear_scrollback || (scan.erase_all && self.saw_cup_home);
+                    let purge = scan.clear_scrollback || (scan.erase_all && self.saw_cup_home);
                     self.saw_cup_home = scan.cup_home;
                     if purge {
                         segments.push((std::mem::take(&mut cur), true));
@@ -939,8 +982,16 @@ impl AltScreenFilter {
 pub fn fallback_color_rgb(index: usize) -> Option<[u8; 3]> {
     match index {
         0..=255 => palette_rgb(index),
-        256 | 267 => Some([(TERMINAL_FG >> 16) as u8, (TERMINAL_FG >> 8) as u8, TERMINAL_FG as u8]),
-        257 | 268 => Some([(TERMINAL_BG >> 16) as u8, (TERMINAL_BG >> 8) as u8, TERMINAL_BG as u8]),
+        256 | 267 => Some([
+            (TERMINAL_FG >> 16) as u8,
+            (TERMINAL_FG >> 8) as u8,
+            TERMINAL_FG as u8,
+        ]),
+        257 | 268 => Some([
+            (TERMINAL_BG >> 16) as u8,
+            (TERMINAL_BG >> 8) as u8,
+            TERMINAL_BG as u8,
+        ]),
         // Dim palette entries: halve the standard colors.
         259..=266 => {
             let [r, g, b] = palette_rgb(index - 259)?;
@@ -1012,10 +1063,7 @@ mod tests {
         let input = b"a\x1b[?47hb\x1b[?1047lc\x1b[?1000l\x1b[?1006hd";
         assert_eq!(
             flat(f.feed(input)),
-            (
-                b"abc\x1b[?1000l\x1b[?1006hd".to_vec(),
-                0
-            )
+            (b"abc\x1b[?1000l\x1b[?1006hd".to_vec(), 0)
         );
     }
 
@@ -1088,9 +1136,7 @@ mod tests {
         let point = term.grid().cursor.point;
         let row = &term.grid()[point.line];
         let start = point.column.0.saturating_sub(7);
-        let text: String = (start..point.column.0)
-            .map(|c| row[Column(c)].c)
-            .collect();
+        let text: String = (start..point.column.0).map(|c| row[Column(c)].c).collect();
         assert_eq!(text, "visible", "live contents survive the clear");
     }
 
@@ -1196,15 +1242,11 @@ mod tests {
         assert_eq!(colors.resolve(269), None);
 
         // Live updates apply immediately.
-        colors.set(
-            [0, 0, 0],
-            [255, 255, 255],
-            {
-                let mut a = ansi;
-                a[2] = [9, 9, 9];
-                a
-            },
-        );
+        colors.set([0, 0, 0], [255, 255, 255], {
+            let mut a = ansi;
+            a[2] = [9, 9, 9];
+            a
+        });
         assert_eq!(colors.resolve(256), Some([0, 0, 0]));
         assert_eq!(colors.resolve(257), Some([255, 255, 255]));
         assert_eq!(colors.resolve(2), Some([9, 9, 9]));

@@ -3,8 +3,19 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
+- Add Windows support to the curl install script (install.sh) and add native install.ps1 for PowerShell.
+- Embed application icon and version metadata into Windows vterm.exe binary.
+- Build and package Windows release zip in the CD workflow.
+- Enable Windows in-app auto-updates: detect `*windows*.zip` assets, extract `vterm.exe`, and swap via a restart batch script.
+- Prefer `pwsh.exe`/`powershell.exe` over `cmd.exe` on Windows and surface PTY spawn failures inside the terminal pane.
+- Fix text-field Shift handling that corrupted `!` and non-ASCII input; ignore Cmd/Ctrl/Alt combos in the simple path.
+- Derive `Theme::is_dark` from background luminance and share contrast helpers via the theme crate.
+- Guard the tab bar against missing workspaces, list bundled SVG assets, and cap PTY batch bytes to avoid OOM spikes.
+- Split workspace git/update helpers into `git.rs`/`update.rs` and enforce `cargo fmt --check` plus `cargo clippy -- -D warnings` in CI.
+
 
 ## [0.5.0] - 2026-08-30
+
 
 - Add initial Windows platform support.
 - Fix native window decorations (minimize/maximize/close) on Windows.

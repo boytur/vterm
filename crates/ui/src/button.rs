@@ -1,40 +1,5 @@
 use gpui::*;
-use theme::Theme;
-
-const MIN_BUTTON_CONTRAST: f32 = 3.0;
-
-fn relative_luminance(color: Rgba) -> f32 {
-    fn linear(channel: f32) -> f32 {
-        if channel <= 0.03928 {
-            channel / 12.92
-        } else {
-            ((channel + 0.055) / 1.055).powf(2.4)
-        }
-    }
-
-    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
-}
-
-fn contrast_ratio(first: Rgba, second: Rgba) -> f32 {
-    let first = relative_luminance(first);
-    let second = relative_luminance(second);
-    (first.max(second) + 0.05) / (first.min(second) + 0.05)
-}
-
-fn readable_text(background: Rgba, preferred: Rgba) -> Rgba {
-    if contrast_ratio(background, preferred) >= MIN_BUTTON_CONTRAST {
-        return preferred;
-    }
-
-    [rgb(0x000000), rgb(0xffffff)]
-        .into_iter()
-        .max_by(|first, second| {
-            contrast_ratio(background, *first)
-                .partial_cmp(&contrast_ratio(background, *second))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .unwrap_or(rgb(0xffffff))
-}
+use theme::{Theme, readable_text};
 
 pub fn button(label: impl IntoElement, theme: &Theme, is_primary: bool) -> Div {
     let mut btn = div()
@@ -63,7 +28,6 @@ pub fn button(label: impl IntoElement, theme: &Theme, is_primary: bool) -> Div {
     btn.child(label)
 }
 
-#[allow(dead_code)]
 pub fn icon_button(icon: impl IntoElement, theme: &Theme, is_danger: bool) -> Div {
     let mut btn = div()
         .p_0()
@@ -88,9 +52,9 @@ pub fn icon_button(icon: impl IntoElement, theme: &Theme, is_danger: bool) -> Di
 
 #[cfg(test)]
 mod tests {
-    use super::{MIN_BUTTON_CONTRAST, contrast_ratio, readable_text};
     use gpui::rgb;
     use theme::Theme;
+    use theme::{MIN_BUTTON_CONTRAST, contrast_ratio, readable_text};
 
     #[test]
     fn button_states_have_readable_label_colors() {

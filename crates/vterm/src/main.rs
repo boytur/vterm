@@ -18,8 +18,19 @@ impl gpui::AssetSource for Assets {
         }
     }
 
-    fn list(&self, _path: &str) -> gpui::Result<Vec<gpui::SharedString>> {
-        Ok(vec![])
+    fn list(&self, path: &str) -> gpui::Result<Vec<gpui::SharedString>> {
+        // GPUI queries this for directory listings (e.g. "icons").
+        // Return the bundled icons so svg().path() resolves in all contexts.
+        const ICONS: &[&str] = &["icons/git_branch.svg", "icons/search.svg"];
+        let prefix = path.trim_matches('/').trim_end_matches('/');
+        let listed: Vec<gpui::SharedString> = if prefix.is_empty() {
+            vec!["icons".into()]
+        } else if prefix == "icons" {
+            ICONS.iter().map(|s| (*s).into()).collect()
+        } else {
+            vec![]
+        };
+        Ok(listed)
     }
 }
 
@@ -51,6 +62,8 @@ fn open_window(cx: &mut App) {
         }),
         ..Default::default()
     };
-    cx.open_window(options, |window, cx| cx.new(|cx| Workspace::new(window, cx)))
-        .expect("failed to open window");
+    cx.open_window(options, |window, cx| {
+        cx.new(|cx| Workspace::new(window, cx))
+    })
+    .expect("failed to open window");
 }
