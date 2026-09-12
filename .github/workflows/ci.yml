@@ -23,13 +23,14 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            runs-on: macos-latest
+            runs-on: '"macos-latest"'
           # Warm self-hosted box: incremental target dir, no queue/provision.
           # Register with: ./config.cmd --url https://github.com/boytur/vterm
           #   --token <fresh-token> --labels vterm-win
           - os: self-hosted-windows
-            runs-on: [self-hosted, Windows, X64, vterm-win]
-    runs-on: ${{ matrix.runs-on }}
+            runs-on: '["self-hosted", "Windows", "X64", "vterm-win"]'
+    # fromJSON: runs-on cannot expand an array-typed matrix value directly.
+    runs-on: ${{ fromJSON(matrix.runs-on) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
