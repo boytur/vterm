@@ -383,16 +383,9 @@ pub fn render_terminal_view(
         .workspaces
         .get(ws_idx)
         .and_then(|ws| {
-            workspace
-                .terminals
-                .get(ws_idx)
-                .and_then(|tabs| tabs.get(ws.active_term))
-                .map(|tab| {
-                    (
-                        &ws.terminals[ws.active_term.min(ws.terminals.len() - 1)],
-                        tab,
-                    )
-                })
+            let tab_data = ws.terminals.get(ws.active_term)?;
+            let tab = workspace.terminals.get(ws_idx)?.get(ws.active_term)?;
+            Some((tab_data, tab))
         })
         // Guard against transient state/runtime disagreement.
         .filter(|(tab_data, tab)| {
@@ -611,7 +604,9 @@ fn render_pane(
             gpui::MouseButton::Right,
             cx.listener(Workspace::on_pane_mouse_up),
         )
-        .on_scroll_wheel(cx.listener(Workspace::on_terminal_scroll_wheel))
+        .on_scroll_wheel(cx.listener(move |this, event, _window, cx| {
+            this.on_pane_scroll_wheel(pane_idx, event, cx);
+        }))
         .child(selection_overlay)
         .children(lines_elements)
         .children(block_elements)

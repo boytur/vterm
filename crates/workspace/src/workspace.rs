@@ -851,10 +851,12 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn on_terminal_scroll_wheel(
+    /// Scrolls the pane under the cursor (each leaf binds its own index).
+    /// Font zoom stays global — size is app-wide, not per pane.
+    pub fn on_pane_scroll_wheel(
         &mut self,
+        pane_idx: usize,
         event: &gpui::ScrollWheelEvent,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if ui::shortcut_modifier(&event.modifiers) {
@@ -870,7 +872,15 @@ impl Workspace {
         // time rather than accumulating many tiny sub-line deltas.
         let delta_lines = f32::from(delta_pixels) / cell_h * 3.0;
 
-        if let Some(term_entity) = self.active_term_entity() {
+        let ws_idx = self.state.active_workspace;
+        let entity = self.state.workspaces.get(ws_idx).and_then(|ws| {
+            self.terminals
+                .get(ws_idx)?
+                .get(ws.active_term)?
+                .entities
+                .get(pane_idx)
+        });
+        if let Some(term_entity) = entity {
             term_entity.update(cx, |term, _| {
                 term.scroll(delta_lines);
             });
@@ -1044,9 +1054,12 @@ impl Workspace {
                     return;
                 }
                 "d" | "D" => {
-                    // Cmd+D splits side-by-side, Cmd+Shift+D stacks.
-                    // (Shift may arrive folded into the key as "D".)
-                    let dir = if event.keystroke.modifiers.shift {
+                    // Split side-by-side, or stacked with Shift. Shift may
+                    // arrive folded into the key as "D" without the flag, so
+                    // either signal selects the stacked direction.
+                    let shifted =
+                        event.keystroke.modifiers.shift || event.keystroke.key.as_str() == "D";
+                    let dir = if shifted {
                         SplitDir::Horizontal
                     } else {
                         SplitDir::Vertical
@@ -1310,6 +1323,17 @@ impl Workspace {
         if pane_idx >= len {
             return;
         }
+        // Clicking the already-focused pane must not rewrite state.json.
+        if self.focused_pane_idx() == pane_idx
+            && self
+                .state
+                .workspaces
+                .get(ws_idx)
+                .and_then(|ws| ws.terminals.get(tab_idx))
+                .is_some_and(|tab| tab.active_pane == pane_idx)
+        {
+            return;
+        }
         if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
             && let Some(tab_data) = ws.terminals.get_mut(tab_idx)
         {
@@ -1391,6 +1415,17 @@ impl Workspace {
                 .map(|t| t.active_pane)
                 .unwrap_or(0)
         });
+        // Persist first: a rejected close (last pane) must leave the runtime
+        // entities untouched so state and runtime stay in lockstep.
+        if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
+            && let Some(tab_data) = ws.terminals.get_mut(tab_idx)
+        {
+            if !tab_data.close_pane(pane_idx) {
+                return;
+            }
+        } else {
+            return;
+        }
         if let Some(tab) = self
             .terminals
             .get_mut(ws_idx)
@@ -1400,20 +1435,18 @@ impl Workspace {
             tab.entities[pane_idx].update(cx, |term, _| term.shutdown());
             tab.entities.remove(pane_idx);
         }
-        if let Some(ws) = self.state.workspaces.get_mut(ws_idx)
-            && let Some(tab_data) = ws.terminals.get_mut(tab_idx)
-        {
-            if !tab_data.close_pane(pane_idx) {
-                return;
-            }
-            if let Some(tab) = self
+        if let Some(tab_data) = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.terminals.get(tab_idx))
+            && let Some(tab) = self
                 .terminals
                 .get_mut(ws_idx)
                 .and_then(|tabs| tabs.get_mut(tab_idx))
-            {
-                tab.active_pane = tab_data.active_pane;
-                tab.root = tab_data.root.clone();
-            }
+        {
+            tab.active_pane = tab_data.active_pane;
+            tab.root = tab_data.root.clone();
         }
         self.selection = None;
         self.state.save().ok();

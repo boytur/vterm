@@ -143,7 +143,8 @@ impl TabData {
         out
     }
 
-    /// Clamps indices, drops dangling leaves, rebuilds a sane tree.
+    /// Repairs a corrupt tree (dangling/duplicate leaves) while keeping a
+    /// valid persisted tree — orientations and ratios — exactly as saved.
     pub fn normalize(&mut self) {
         if self.panes.is_empty() {
             self.panes.push(TerminalData {
@@ -156,21 +157,26 @@ impl TabData {
                 session_name: None,
             });
         }
-        // Keep only leaves pointing at live panes, preserving order.
-        let mut seen = vec![false; self.panes.len()];
-        let mut ordered = Vec::new();
-        for leaf in self.leaves() {
-            if leaf < self.panes.len() && !seen[leaf] {
-                seen[leaf] = true;
-                ordered.push(leaf);
+        if covers_exactly_once(&self.root, self.panes.len()) {
+            // Valid tree: only clamp wild ratios from hand-edited state.
+            self.root = clamp_ratios(std::mem::replace(&mut self.root, SplitNode::Leaf(0)));
+        } else {
+            // Keep only leaves pointing at live panes, preserving order.
+            let mut seen = vec![false; self.panes.len()];
+            let mut ordered = Vec::new();
+            for leaf in self.leaves() {
+                if leaf < self.panes.len() && !seen[leaf] {
+                    seen[leaf] = true;
+                    ordered.push(leaf);
+                }
             }
-        }
-        for (i, used) in seen.iter().enumerate() {
-            if !used {
-                ordered.push(i);
+            for (i, used) in seen.iter().enumerate() {
+                if !used {
+                    ordered.push(i);
+                }
             }
+            self.root = build_balanced(&ordered, 0);
         }
-        self.root = build_balanced(&ordered, 0);
         self.active_pane = self.active_pane.min(self.panes.len().saturating_sub(1));
         if !self.leaves().contains(&self.active_pane) {
             self.active_pane = self.leaves()[0];
@@ -349,6 +355,44 @@ fn renumber_tree(node: SplitNode, renumber: &dyn Fn(usize) -> usize) -> SplitNod
             ratio,
             first: Box::new(renumber_tree(*first, renumber)),
             second: Box::new(renumber_tree(*second, renumber)),
+        },
+    }
+}
+
+/// True when the tree references every pane index exactly once — the
+/// condition under which `normalize` keeps the persisted tree untouched.
+fn covers_exactly_once(node: &SplitNode, pane_count: usize) -> bool {
+    fn walk(node: &SplitNode, seen: &mut [bool]) -> bool {
+        match node {
+            SplitNode::Leaf(i) => {
+                if *i >= seen.len() || seen[*i] {
+                    return false;
+                }
+                seen[*i] = true;
+                true
+            }
+            SplitNode::Split { first, second, .. } => walk(first, seen) && walk(second, seen),
+        }
+    }
+    pane_count > 0 && {
+        let mut seen = vec![false; pane_count];
+        walk(node, &mut seen) && seen.into_iter().all(|used| used)
+    }
+}
+
+fn clamp_ratios(node: SplitNode) -> SplitNode {
+    match node {
+        SplitNode::Leaf(i) => SplitNode::Leaf(i),
+        SplitNode::Split {
+            dir,
+            ratio,
+            first,
+            second,
+        } => SplitNode::Split {
+            dir,
+            ratio: ratio.clamp(0.15, 0.85),
+            first: Box::new(clamp_ratios(*first)),
+            second: Box::new(clamp_ratios(*second)),
         },
     }
 }
@@ -599,5 +643,35 @@ mod tests {
         // First-level vertical split at 50%: left stack is 450 wide.
         let left: Vec<_> = rects.iter().filter(|(_, x, _, _, _)| *x < 450.0).collect();
         assert_eq!(left.len(), 2);
+    }
+
+    #[test]
+    fn normalize_keeps_valid_custom_layout() {
+        let mut tab = TabData::single(pane("a"));
+        tab.split_pane(0, SplitDir::Vertical);
+        // Customize orientation and ratio away from the balanced defaults.
+        if let SplitNode::Split { dir, ratio, .. } = &mut tab.root {
+            *dir = SplitDir::Horizontal;
+            *ratio = 0.3;
+        } else {
+            panic!("expected a split root");
+        }
+        // Serde round-trip (what AppState::load does) must not rescramble it.
+        let json = serde_json::to_string(&tab).unwrap();
+        let reloaded: TabData = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(
+                reloaded.root,
+                SplitNode::Split {
+                    dir: SplitDir::Horizontal,
+                    ..
+                }
+            ),
+            "orientation lost: {:?}",
+            reloaded.root
+        );
+        if let SplitNode::Split { ratio, .. } = reloaded.root {
+            assert!((ratio - 0.3).abs() < f32::EPSILON, "ratio lost: {ratio}");
+        }
     }
 }

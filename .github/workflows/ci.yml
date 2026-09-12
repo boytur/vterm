@@ -9,13 +9,18 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test-macos:
     name: Build & Test (macos-latest)
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -23,7 +28,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -44,21 +49,13 @@ jobs:
         run: cargo test --verbose
 
   build-and-test-windows:
-    name: Build & Test (self-hosted-windows)
-    # The self-hosted runner must never execute untrusted code: PRs from
-    # forks skip this job (hosted macOS coverage still applies).
-    # NOTE: `matrix` is not a valid context in job-level `if`, hence two
-    # explicit jobs instead of a matrix.
-    if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    # Warm self-hosted box: incremental target dir, no queue/provision.
-    # Register with: ./config.cmd --url https://github.com/boytur/vterm
-    #   --token <fresh-token> --labels vterm-win
-    runs-on: [self-hosted, Windows, X64, vterm-win]
+    name: Build & Test (windows-latest)
+    runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -66,7 +63,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
