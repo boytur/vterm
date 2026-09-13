@@ -3,6 +3,9 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-09-13
+
 - Fix CD release workflow by replacing unresolvable pinned action SHAs (`dtolnay/rust-toolchain`, `softprops/action-gh-release`) with their floating tags.
 
 
