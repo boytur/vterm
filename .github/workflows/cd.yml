@@ -34,7 +34,7 @@ jobs:
           }
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@a54c7fe9363c9033d274415a478d809a93464b36 # stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
@@ -117,7 +117,7 @@ jobs:
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@c062e49339e55729be6ef16e537482f6f4c0840b # v2.2.1
+        uses: softprops/action-gh-release@v2
         with:
           files: vterm-macos.dmg
           body_path: release-notes.md
@@ -142,7 +142,7 @@ jobs:
           }
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@a54c7fe9363c9033d274415a478d809a93464b36 # stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
@@ -181,7 +181,7 @@ jobs:
 
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@c062e49339e55729be6ef16e537482f6f4c0840b # v2.2.1
+        uses: softprops/action-gh-release@v2
         with:
           files: vterm-windows.zip
           body_path: release-notes.md

@@ -3,6 +3,11 @@
 All notable changes to vterm are documented here.
 
 ## [Unreleased]
+- Fix CD release workflow by replacing unresolvable pinned action SHAs (`dtolnay/rust-toolchain`, `softprops/action-gh-release`) with their floating tags.
+
+
+## [0.7.0] - 2026-09-12
+
 - Add split panes: divide any tab side-by-side (`⌘ D`) or stacked (`⌘ ⇧ D`), click or `⌘ [` / `⌘ ]` to focus, `⌘ W` closes the pane (or the tab when only one remains). Layouts persist across restarts and old single-pane state files keep loading.
 - Enable all keyboard shortcuts on Windows via Ctrl (`Ctrl+T/D/W`, `Ctrl+C` copies when text is selected and sends SIGINT otherwise) and show `Ctrl+…` hints in Settings; AltGr combos no longer fire shortcuts or send stray control codes.
 
